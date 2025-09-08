@@ -1,6 +1,7 @@
 package org.csu.sdolp.storage.disk;
 
 
+import lombok.Getter;
 import org.csu.sdolp.storage.page.Page;
 import org.csu.sdolp.storage.page.PageId;
 
@@ -58,7 +59,17 @@ public class DiskManager {
      */
     public Page readPage(PageId pageId) throws IOException {
         long offset = (long) pageId.getPageNum() * PAGE_SIZE;
-        byte[] pageData = new byte[PAGE_SIZE];
+        byte[] pageData = new byte[PAGE_SIZE]; // 默认全为0
+
+        // 检查请求的页面偏移量是否超出了文件的当前大小
+        if (offset >= dbFile.length()) {
+            // 如果是，说明这个页面还未在磁盘上分配。
+            // 直接返回一个全新的空页面，而不是尝试读取文件。
+            // 这个页面将在后续被 flushPage 时真正写入磁盘。
+            return new Page(pageId, pageData);
+        }
+
+        // 如果页面确实存在于文件中，则正常读取。
         dbFile.seek(offset);
         dbFile.readFully(pageData);
         return new Page(pageId, pageData);
@@ -70,6 +81,15 @@ public class DiskManager {
      */
     public synchronized PageId allocatePage() throws IOException {
         return new PageId(nextFreePageId++);
+    }
+
+    /**
+     * 获取数据库文件的总长度（以字节为单位）。
+     * @return 文件长度
+     * @throws IOException
+     */
+    public long getFileLength() throws IOException {
+        return dbFile.length();
     }
 
     // TODO: 实现其他方法，如释放页等。

@@ -1,49 +1,147 @@
 package org.csu.sdolp.storage.page;
 
-import org.yaml.snakeyaml.util.Tuple;
+import lombok.Getter;
+import org.csu.sdolp.common.model.Schema;
+import org.csu.sdolp.common.model.Tuple;
 
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Page类，封装了4KB的二进制数据，并提供了读写记录的方法。
- * 一页包含一个页头和一个数据区域。
+ * Page类，采用 Slotted Page 布局来管理和存储 Tuple。
  */
+@Getter
 public class Page {
-    public static final int PAGE_SIZE = 4096; // 4KB [cite: 78, 124]
+    public static final int PAGE_SIZE = 4096;//  [cite_start] // 4KB [cite: 78, 124]
+    private static final int HEADER_NUM_TUPLES_OFFSET = 0;
+    private static final int HEADER_FREE_SPACE_POINTER_OFFSET = 4;
+    private static final int HEADER_SIZE = 8;
+    private static final int SLOT_SIZE = 8; // 4 bytes for offset, 4 bytes for length
+
     private final PageId pageId;
     private final ByteBuffer data;
 
     public Page(PageId pageId) {
         this.pageId = pageId;
         this.data = ByteBuffer.allocate(PAGE_SIZE);
+        // 初始化页头
+        setNumTuples(0);
+        setFreeSpacePointer(PAGE_SIZE);
     }
 
     public Page(PageId pageId, byte[] rawData) {
         this.pageId = pageId;
         this.data = ByteBuffer.wrap(rawData);
     }
-    
-    public PageId getPageId() {
-        return pageId;
+
+    // --- 页头操作 ---
+    private int getNumTuples() {
+        return data.getInt(HEADER_NUM_TUPLES_OFFSET);
     }
-    
-    public ByteBuffer getData() {
-        return data;
+
+    private void setNumTuples(int numTuples) {
+        data.putInt(HEADER_NUM_TUPLES_OFFSET, numTuples);
     }
-    
-    // TODO: 实现读写记录的方法，将Tuple对象转换为字节流，并写入页中。
-    // 这部分需要与record/Tuple.java和record/Schema.java结合。
-    public void writeTuple(Tuple tuple, int offset) {
-        // 示例：将字符串写入页中
-        byte[] tupleBytes = tuple.toString().getBytes(StandardCharsets.UTF_8);
-        data.position(offset);
+
+    private int getFreeSpacePointer() {
+        return data.getInt(HEADER_FREE_SPACE_POINTER_OFFSET);
+    }
+
+    private void setFreeSpacePointer(int pointer) {
+        data.putInt(HEADER_FREE_SPACE_POINTER_OFFSET, pointer);
+    }
+
+    // --- 槽操作 ---
+    private int getTupleOffset(int slotIndex) {
+        return data.getInt(HEADER_SIZE + slotIndex * SLOT_SIZE);
+    }
+
+    private void setTupleOffset(int slotIndex, int offset) {
+        data.putInt(HEADER_SIZE + slotIndex * SLOT_SIZE, offset);
+    }
+
+    private int getTupleLength(int slotIndex) {
+        return data.getInt(HEADER_SIZE + slotIndex * SLOT_SIZE + 4);
+    }
+
+    private void setTupleLength(int slotIndex, int length) {
+        data.putInt(HEADER_SIZE + slotIndex * SLOT_SIZE + 4, length);
+    }
+
+    /**
+     * 计算剩余可用空间。
+     * 可用空间 = 空闲空间指针 - (页头大小 + 已有槽位大小)
+     * @return 剩余字节数
+     */
+    private int getFreeSpace() {
+        return getFreeSpacePointer() - (HEADER_SIZE + getNumTuples() * SLOT_SIZE);
+    }
+
+    /**
+     * 向页面中插入一条记录。
+     * @param tuple 要插入的记录
+     * @return 如果成功返回 true，如果空间不足返回 false。
+     */
+    public boolean insertTuple(Tuple tuple) {
+        byte[] tupleBytes = tuple.toBytes();
+        int tupleLength = tupleBytes.length;
+
+        // 检查是否有足够空间 (元组数据 + 1个新槽位)
+        if (getFreeSpace() < tupleLength + SLOT_SIZE) {
+            return false;
+        }
+
+        // 1. 计算新元组的存储位置，并写入数据
+        int newFreeSpacePointer = getFreeSpacePointer() - tupleLength;
+        setFreeSpacePointer(newFreeSpacePointer);
+        data.position(newFreeSpacePointer);
         data.put(tupleBytes);
+
+        // 2. 在槽数组中为新元组分配一个槽
+        int numTuples = getNumTuples();
+        setTupleOffset(numTuples, newFreeSpacePointer);
+        setTupleLength(numTuples, tupleLength);
+
+        // 3. 更新页头中的元组数量
+        setNumTuples(numTuples + 1);
+
+        return true;
     }
-    
-    public Tuple readTuple(int offset) {
-        // 示例：从页中读取字符串，并转换为Tuple
-        // 这部分实现依赖于你如何定义 Tuple 的序列化格式。
-        return null; 
+
+    /**
+     * 根据槽位索引读取一条记录。
+     * @param slotIndex 槽位号
+     * @param schema    表的模式
+     * @return 读取到的 Tuple 对象，如果槽位无效则返回 null。
+     */
+    public Tuple getTuple(int slotIndex, Schema schema) {
+        if (slotIndex >= getNumTuples()) {
+            return null;
+        }
+        int offset = getTupleOffset(slotIndex);
+        int length = getTupleLength(slotIndex);
+
+        // 使用 System.arraycopy 直接从页面的底层数组复制字节。
+        // 这种方法不依赖也不修改 ByteBuffer 的内部状态（如 position），
+        // 因此更加健壮，能避免共享状态带来的潜在问题。
+        byte[] tupleBytes = new byte[length];
+        System.arraycopy(data.array(), offset, tupleBytes, 0, length);
+
+        return Tuple.fromBytes(tupleBytes, schema);
+    }
+
+    /**
+     * 获取页面中所有的元组。
+     * @param schema 表的模式
+     * @return 包含所有元组的列表
+     */
+    public List<Tuple> getAllTuples(Schema schema) {
+        List<Tuple> tuples = new ArrayList<>();
+        int numTuples = getNumTuples();
+        for (int i = 0; i < numTuples; i++) {
+            tuples.add(getTuple(i, schema));
+        }
+        return tuples;
     }
 }
