@@ -38,43 +38,45 @@ public class DiskManager {
         this.dbFile = new RandomAccessFile(file, "rw");
 
         if (isNewFile) {
-            // 如果是新文件，初始化头指针区域并写入-1
+            // 如果是新文件，写入一个完整的、内容为0的文件头
+            byte[] header = new byte[DB_FILE_HEADER_SIZE];
+            dbFile.write(header);
+            // 在文件头内写入空闲链表指针
             dbFile.seek(FREE_LIST_HEADER_POINTER_OFFSET);
             dbFile.writeInt(freeListHeadPageId);
-            // --- FIX: 新文件的第一个可用页应该是 Page 0 ---
-            // 因为 Catalog 会使用 Page 0，所以我们从 0 开始分配
+            // 数据页从0开始分配，因为不再与文件头冲突
             this.nextFreePageId = 0;
         } else {
-            // 如果是现有文件，读取头指针
+            // 如果是现有文件，从文件头读取指针
             dbFile.seek(FREE_LIST_HEADER_POINTER_OFFSET);
             this.freeListHeadPageId = dbFile.readInt();
-            // --- FIX: 计算下一个页号时，要考虑文件头占用的空间 ---
-            // 简单起见，我们假设文件头之外都是整页
-            this.nextFreePageId = (int) (dbFile.length() / PAGE_SIZE);
+            // 计算下一个可用页ID时，要减去文件头的大小
+            this.nextFreePageId = (int) ((dbFile.length() - DB_FILE_HEADER_SIZE) / PAGE_SIZE);
         }
     }
 
     public void close() throws IOException {
         if (dbFile != null) {
-            // --- FIX: 关闭前，将最新的空闲链表头指针持久化 ---
+            // 关闭前，将空闲链表的头指针持久化到文件头
             dbFile.seek(FREE_LIST_HEADER_POINTER_OFFSET);
             dbFile.writeInt(freeListHeadPageId);
+            dbFile.getFD().sync();
             dbFile.close();
-            dbFile = null; // 避免重复关闭
+            dbFile = null;
         }
     }
 
     public void writePage(Page page) throws IOException {
-        // --- FIX: 写入页时，要为4字节的文件头预留空间 ---
-        // 所有页的偏移量都应该加上文件头的大小
-        long offset = (long) page.getPageId().getPageNum() * PAGE_SIZE + 4;
+        // 写入页时，要加上文件头的偏移量
+        long offset = (long) page.getPageId().getPageNum() * PAGE_SIZE + DB_FILE_HEADER_SIZE;
         dbFile.seek(offset);
         dbFile.write(page.getData().array());
+        dbFile.getFD().sync();
     }
 
     public Page readPage(PageId pageId) throws IOException {
-        // --- FIX: 读取页时，同样要加上文件头的偏移量 ---
-        long offset = (long) pageId.getPageNum() * PAGE_SIZE + 4;
+        // 读取页时，也要加上文件头的偏移量
+        long offset = (long) pageId.getPageNum() * PAGE_SIZE + DB_FILE_HEADER_SIZE;
         byte[] pageData = new byte[PAGE_SIZE];
 
         if (offset >= dbFile.length()) {

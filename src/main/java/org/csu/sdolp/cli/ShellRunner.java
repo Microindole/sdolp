@@ -81,7 +81,6 @@ public class ShellRunner implements CommandLineRunner {
 
         System.out.println("缓存池大小: 3，使用 FIFO 策略。");
 
-        // --- FIX: 这个循环现在会分配 Page 0, 1, 2, 3 ---
         for (int i = 0; i < 4; i++) {
             Page page = bufferPoolManager.newPage();
             int pageNum = page.getPageId().getPageNum();
@@ -90,20 +89,31 @@ public class ShellRunner implements CommandLineRunner {
             bufferPoolManager.flushPage(page.getPageId());
         }
 
-        // 此时缓存池中应有页 1, 2, 3。页 0 已经因为 FIFO 策略被淘汰。
-
-        // --- FIX: 验证被淘汰的页是 Page 0 ---
         System.out.println("再次访问页 0，预期它已被淘汰并从磁盘重新加载。");
-        PageId evictedPageId = new PageId(0); // 第一个被淘汰的页是 Page 0
-        Page evictedPage = bufferPoolManager.getPage(evictedPageId);
+        PageId evictedPageId = new PageId(0);
+        Page evictedPage = bufferPoolManager.getPage(evictedPageId); // 这会产生一次 miss
+
+        // --- ↓↓↓ 新增代码，再次访问，这次应该是 hit ↓↓↓ ---
+        System.out.println("再次访问页 0，这次应该命中缓存。");
+        bufferPoolManager.getPage(evictedPageId); // 这会产生一次 hit
+        // --- ↑↑↑ 新增代码 ↑↑↑ ---
+
         byte data = evictedPage.getData().get(0);
         System.out.println("从页 0 读取的数据: " + (char) data);
 
-        if (data == 'A') { // 验证 Page 0 里的内容是不是 'A'
+        if (data == 'A') {
             System.out.println("缓存替换测试通过，结果符合预期。");
         } else {
+            System.err.println( "data == " + data + ", data != 'A'");
             System.err.println("缓存替换测试失败！");
         }
+
+        // --- ↓↓↓ 新增代码，打印最终的统计信息 ↓↓↓ ---
+        System.out.println("\n--- 缓存统计信息 ---");
+        System.out.println("命中次数: " + bufferPoolManager.getHitCount());
+        System.out.println("未命中次数: " + bufferPoolManager.getMissCount());
+        System.out.printf("缓存命中率: %.2f%%\n", bufferPoolManager.getHitRate() * 100);
+        // --- ↑↑↑ 新增代码 ↑↑↑ ---
 
         diskManager.close();
         new File(TEST_DB_FILE_REPLACEMENT).delete();
