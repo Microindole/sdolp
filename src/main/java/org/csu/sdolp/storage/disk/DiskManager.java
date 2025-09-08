@@ -1,14 +1,11 @@
 package org.csu.sdolp.storage.disk;
 
-
-import lombok.Getter;
 import org.csu.sdolp.storage.page.Page;
 import org.csu.sdolp.storage.page.PageId;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.nio.ByteBuffer;
 
 import static org.csu.sdolp.storage.page.Page.PAGE_SIZE;
 
@@ -19,8 +16,13 @@ public class DiskManager {
     private final String dbFilePath;
     private RandomAccessFile dbFile;
 
-    private int nextFreePageId = 0;
+    // --- FIX: 隔离文件头和数据区 ---
+    // 预留 4KB 作为文件头，专门用于存储元数据
+    private static final int DB_FILE_HEADER_SIZE = 4096;
+    private static final long FREE_LIST_HEADER_POINTER_OFFSET = 0;
 
+    private int freeListHeadPageId = -1;
+    private int nextFreePageId = 0;
 
     public DiskManager(String dbFilePath) {
         this.dbFilePath = dbFilePath;
@@ -28,69 +30,83 @@ public class DiskManager {
 
     public void open() throws IOException {
         File file = new File(dbFilePath);
-        // 如果文件不存在，则创建
+        boolean isNewFile = !file.exists() || file.length() == 0;
+
         if (!file.exists()) {
             file.createNewFile();
         }
         this.dbFile = new RandomAccessFile(file, "rw");
-        this.nextFreePageId = (int) (dbFile.length() / PAGE_SIZE);
+
+        if (isNewFile) {
+            // 如果是新文件，初始化头指针区域并写入-1
+            dbFile.seek(FREE_LIST_HEADER_POINTER_OFFSET);
+            dbFile.writeInt(freeListHeadPageId);
+            // --- FIX: 新文件的第一个可用页应该是 Page 0 ---
+            // 因为 Catalog 会使用 Page 0，所以我们从 0 开始分配
+            this.nextFreePageId = 0;
+        } else {
+            // 如果是现有文件，读取头指针
+            dbFile.seek(FREE_LIST_HEADER_POINTER_OFFSET);
+            this.freeListHeadPageId = dbFile.readInt();
+            // --- FIX: 计算下一个页号时，要考虑文件头占用的空间 ---
+            // 简单起见，我们假设文件头之外都是整页
+            this.nextFreePageId = (int) (dbFile.length() / PAGE_SIZE);
+        }
     }
 
     public void close() throws IOException {
         if (dbFile != null) {
+            // --- FIX: 关闭前，将最新的空闲链表头指针持久化 ---
+            dbFile.seek(FREE_LIST_HEADER_POINTER_OFFSET);
+            dbFile.writeInt(freeListHeadPageId);
             dbFile.close();
+            dbFile = null; // 避免重复关闭
         }
     }
 
-    /**
-     * 将一个页写入磁盘。
-     * @param page 要写入的Page对象
-     */
     public void writePage(Page page) throws IOException {
-        long offset = (long) page.getPageId().getPageNum() * PAGE_SIZE;
+        // --- FIX: 写入页时，要为4字节的文件头预留空间 ---
+        // 所有页的偏移量都应该加上文件头的大小
+        long offset = (long) page.getPageId().getPageNum() * PAGE_SIZE + 4;
         dbFile.seek(offset);
         dbFile.write(page.getData().array());
     }
 
-    /**
-     * 从磁盘读取一个页。
-     * @param pageId 要读取的页ID
-     * @return 读取到的Page对象
-     */
     public Page readPage(PageId pageId) throws IOException {
-        long offset = (long) pageId.getPageNum() * PAGE_SIZE;
-        byte[] pageData = new byte[PAGE_SIZE]; // 默认全为0
+        // --- FIX: 读取页时，同样要加上文件头的偏移量 ---
+        long offset = (long) pageId.getPageNum() * PAGE_SIZE + 4;
+        byte[] pageData = new byte[PAGE_SIZE];
 
-        // 检查请求的页面偏移量是否超出了文件的当前大小
         if (offset >= dbFile.length()) {
-            // 如果是，说明这个页面还未在磁盘上分配。
-            // 直接返回一个全新的空页面，而不是尝试读取文件。
-            // 这个页面将在后续被 flushPage 时真正写入磁盘。
             return new Page(pageId, pageData);
         }
-
-        // 如果页面确实存在于文件中，则正常读取。
         dbFile.seek(offset);
         dbFile.readFully(pageData);
         return new Page(pageId, pageData);
     }
-    
-    /**
-     * 分配一个新页的页号。
-     * @return 新分配的页ID
-     */
+
     public synchronized PageId allocatePage() throws IOException {
-        return new PageId(nextFreePageId++);
+        if (freeListHeadPageId != -1) {
+            int reusedPageNum = freeListHeadPageId;
+            PageId reusedPageId = new PageId(reusedPageNum);
+            Page reusedPage = readPage(reusedPageId);
+            int nextFreeId = reusedPage.getData().getInt(0);
+            freeListHeadPageId = nextFreeId;
+            return reusedPageId;
+        } else {
+            return new PageId(nextFreePageId++);
+        }
     }
 
-    /**
-     * 获取数据库文件的总长度（以字节为单位）。
-     * @return 文件长度
-     * @throws IOException
-     */
+    public synchronized void deallocatePage(PageId pageId) throws IOException {
+        int deallocatedPageNum = pageId.getPageNum();
+        Page page = readPage(pageId);
+        page.getData().putInt(0, freeListHeadPageId);
+        writePage(page);
+        freeListHeadPageId = deallocatedPageNum;
+    }
+
     public long getFileLength() throws IOException {
         return dbFile.length();
     }
-
-    // TODO: 实现其他方法，如释放页等。
 }

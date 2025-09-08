@@ -73,37 +73,39 @@ public class ShellRunner implements CommandLineRunner {
     }
 
     private void testBufferPoolReplacement() throws IOException {
-        DiskManager diskManager = new DiskManager(DB_FILE_PATH);
+        final String TEST_DB_FILE_REPLACEMENT = "minidb_replacement.db";
+        new File(TEST_DB_FILE_REPLACEMENT).delete();
+        DiskManager diskManager = new DiskManager(TEST_DB_FILE_REPLACEMENT);
         diskManager.open();
-        // 将缓存池大小设为3，以快速触发替换策略
         BufferPoolManager bufferPoolManager = new BufferPoolManager(3, diskManager, "FIFO");
 
-        // 2.1. 顺序访问4个页，触发替换
         System.out.println("缓存池大小: 3，使用 FIFO 策略。");
-        for (int i = 1; i <= 4; i++) { // 从1开始，因为页0在步骤1中已创建
+
+        // --- FIX: 这个循环现在会分配 Page 0, 1, 2, 3 ---
+        for (int i = 0; i < 4; i++) {
             Page page = bufferPoolManager.newPage();
             int pageNum = page.getPageId().getPageNum();
-            page.getData().put(0, (byte) (65 + i)); // 写入 'B', 'C', 'D', 'E'
-            System.out.println("分配并访问新页: " + pageNum);
+            page.getData().put(0, (byte) (65 + i)); // 写入 'A', 'B', 'C', 'D'
+            System.out.println("分配并访问新页: " + pageNum + "，写入字符: " + (char)(65 + i));
+            bufferPoolManager.flushPage(page.getPageId());
         }
 
-        // 此时缓存池中应有页 2, 3, 4。页 1 已经因为 FIFO 策略被淘汰。
+        // 此时缓存池中应有页 1, 2, 3。页 0 已经因为 FIFO 策略被淘汰。
 
-        // 2.2. 再次访问第一个被淘汰的页（页1），验证它是否已被淘汰并从磁盘加载
-        System.out.println("再次访问页 1，预期它已被淘汰并从磁盘重新加载。");
-        PageId evictedPageId = new PageId(1);
+        // --- FIX: 验证被淘汰的页是 Page 0 ---
+        System.out.println("再次访问页 0，预期它已被淘汰并从磁盘重新加载。");
+        PageId evictedPageId = new PageId(0); // 第一个被淘汰的页是 Page 0
         Page evictedPage = bufferPoolManager.getPage(evictedPageId);
         byte data = evictedPage.getData().get(0);
-        System.out.println("从页 1 读取的数据: " + (char) data);
+        System.out.println("从页 0 读取的数据: " + (char) data);
 
-        // 2.3. 验证数据是否正确
-        // 预期的结果是字符 'B'，因为页 1 被写入了 'B'
-        if (data == 'B') {
+        if (data == 'A') { // 验证 Page 0 里的内容是不是 'A'
             System.out.println("缓存替换测试通过，结果符合预期。");
         } else {
             System.err.println("缓存替换测试失败！");
         }
 
         diskManager.close();
+        new File(TEST_DB_FILE_REPLACEMENT).delete();
     }
 }

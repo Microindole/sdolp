@@ -112,5 +112,42 @@ public class BufferPoolManager {
         return newPage;
     }
 
+    /**
+     * 删除一个页。
+     * 这包括从缓存中移除它，并通知 DiskManager 将其标记为可用。
+     * @param pageId 要删除的页ID
+     * @return 如果成功删除返回 true
+     */
+    public boolean deletePage(PageId pageId) throws IOException {
+        // 1. 从缓存页表中移除
+        Page removedPage = pageTable.remove(pageId);
+
+        // 如果页不在缓存中，它可能只在磁盘上，这也是允许的
+        // if (removedPage == null) {
+        //     return false; // 或者根据你的设计决定是否报错
+        // }
+
+        // 2. 从替换策略中移除（如果你的替换器需要显式移除）
+        // 对于我们当前的 LRU/FIFO 实现，当它被淘汰时会自动移除，
+        // 但为了健壮性，可以考虑为 Replacer 增加一个 remove 方法。
+        // replacer.remove(pageId);
+
+        // 3. 通知 DiskManager 释放这个页
+        diskManager.deallocatePage(pageId);
+
+        return true;
+    }
+
+    /**
+     * 将缓冲池中的所有页刷新到磁盘。
+     * 这在关闭数据库或创建检查点时非常重要。
+     * @throws IOException
+     */
+    public void flushAllPages() throws IOException {
+        for (PageId pageId : pageTable.keySet()) {
+            flushPage(pageId);
+        }
+    }
+
     // TODO: 实现其他方法，如释放页等。
 }
