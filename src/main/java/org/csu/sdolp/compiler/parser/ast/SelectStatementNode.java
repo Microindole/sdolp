@@ -5,10 +5,17 @@ import java.util.List;
 /**
  * @author hidyouth
  * @description: 表示一个 SELECT 语句
- * 注意：为了简化，我们暂时不支持 WHERE 子句，可以在之后迭代添加
+ *
+ * @param selectList  查询的列或表达式列表
+ * @param fromTable   查询的表
+ * @param whereClause WHERE 条件子句 (可以为 null)
+ * @param isSelectAll 是否为 SELECT *
  */
 public record SelectStatementNode(
         List<ExpressionNode> selectList,
-        IdentifierNode fromTable
+        IdentifierNode fromTable,
+        ExpressionNode whereClause,
+        boolean isSelectAll
 ) implements StatementNode {
 }
+

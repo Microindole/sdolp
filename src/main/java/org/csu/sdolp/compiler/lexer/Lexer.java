@@ -82,30 +82,47 @@ public class Lexer {
             return readString();
         }
 
+        // ====== 修改：扩展运算符和分隔符的识别 ======
         // 识别运算符和分隔符
-        return switch (currentChar) {
-            case '=' -> consumeAndReturn(TokenType.EQUAL, "=");
-            case ',' -> consumeAndReturn(TokenType.COMMA, ",");
-            case ';' -> consumeAndReturn(TokenType.SEMICOLON, ";");
-            case '(' -> consumeAndReturn(TokenType.LPAREN, "(");
-            case ')' -> consumeAndReturn(TokenType.RPAREN, ")");
-            case '>' -> consumeAndReturn(TokenType.GREATER, ">");
-            case '<' -> {
-                if (peekNext() == '>') {
-                    advance(); // consume '>'
-                    yield consumeAndReturn(TokenType.NOT_EQUAL, "<>");
-                }
-                yield consumeAndReturn(TokenType.LESS, "<");
-            }
-            case '!' -> {
+        switch (currentChar) {
+            case '=':
+                return consumeAndReturn(TokenType.EQUAL, "=");
+            case ',':
+                return consumeAndReturn(TokenType.COMMA, ",");
+            case ';':
+                return consumeAndReturn(TokenType.SEMICOLON, ";");
+            case '(':
+                return consumeAndReturn(TokenType.LPAREN, "(");
+            case ')':
+                return consumeAndReturn(TokenType.RPAREN, ")");
+            case '*':
+                return consumeAndReturn(TokenType.ASTERISK, "*");
+            case '>':
                 if (peekNext() == '=') {
                     advance(); // consume '='
-                    yield consumeAndReturn(TokenType.NOT_EQUAL, "!=");
+                    return consumeAndReturn(TokenType.GREATER_EQUAL, ">=");
                 }
-                yield consumeAndReturn(TokenType.ILLEGAL, String.valueOf(currentChar));
-            }
-            default -> consumeAndReturn(TokenType.ILLEGAL, String.valueOf(currentChar));
-        };
+                return consumeAndReturn(TokenType.GREATER, ">");
+            case '<':
+                if (peekNext() == '>') {
+                    advance(); // consume '>'
+                    return consumeAndReturn(TokenType.NOT_EQUAL, "<>");
+                }
+                if (peekNext() == '=') {
+                    advance(); // consume '='
+                    return consumeAndReturn(TokenType.LESS_EQUAL, "<=");
+                }
+                return consumeAndReturn(TokenType.LESS, "<");
+            case '!':
+                if (peekNext() == '=') {
+                    advance(); // consume '='
+                    return consumeAndReturn(TokenType.NOT_EQUAL, "!=");
+                }
+                return consumeAndReturn(TokenType.ILLEGAL, String.valueOf(currentChar));
+            default:
+                return consumeAndReturn(TokenType.ILLEGAL, String.valueOf(currentChar));
+        }
+
     }
 
     private Token readIdentifierOrKeyword() {

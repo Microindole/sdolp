@@ -46,8 +46,16 @@ public class Parser {
         if (match(TokenType.SELECT)) {
             return parseSelectStatement();
         }
+        // ====== 修改：新增 INSERT 和 DELETE 解析分支 ======
+        if (match(TokenType.INSERT)) {
+            return parseInsertStatement();
+        }
+        if (match(TokenType.DELETE)) {
+            return parseDeleteStatement();
+        }
+        // ===============================================
         // 在此可以扩展支持 INSERT, DELETE 等语句
-        throw new ParseException(peek(), "a valid statement (CREATE, SELECT, etc.)");
+        throw new ParseException(peek(), "a valid statement (CREATE, SELECT, INSERT, DELETE, etc.)");
     }
 
     /**
@@ -107,30 +115,101 @@ public class Parser {
         return new ColumnDefinitionNode(columnName, dataType);
     }
 
-    /**
-     * 解析 SELECT 语句
-     * 语法: SELECT col1, col2, ... FROM table_name;
-     */
+    // ====== 修改：重写 SELECT 解析以支持 * 和 WHERE ======
     private SelectStatementNode parseSelectStatement() {
         List<ExpressionNode> selectList = new ArrayList<>();
-        if (!check(TokenType.FROM)) {
-            do {
-                Token columnToken = consume(TokenType.IDENTIFIER, "column name or '*' in select list");
-                selectList.add(new IdentifierNode(columnToken.lexeme()));
-            } while (match(TokenType.COMMA));
+        boolean isSelectAll = false;
+
+        if (match(TokenType.ASTERISK)) {
+            isSelectAll = true;
+        } else {
+            if (!check(TokenType.FROM)) {
+                do {
+                    selectList.add(parsePrimaryExpression());
+                } while (match(TokenType.COMMA));
+            }
         }
 
         consume(TokenType.FROM, "'FROM' keyword");
-
         Token tableNameToken = consume(TokenType.IDENTIFIER, "table name");
         IdentifierNode fromTable = new IdentifierNode(tableNameToken.lexeme());
 
-        return new SelectStatementNode(selectList, fromTable);
+        ExpressionNode whereClause = null;
+        if (match(TokenType.WHERE)) {
+            whereClause = parseExpression();
+        }
+
+        return new SelectStatementNode(selectList, fromTable, whereClause, isSelectAll);
+    }
+    // ====== 新增：INSERT 语句解析方法 ======
+    private InsertStatementNode parseInsertStatement() {
+        consume(TokenType.INTO, "'INTO' keyword");
+        Token tableNameToken = consume(TokenType.IDENTIFIER, "table name");
+        IdentifierNode tableName = new IdentifierNode(tableNameToken.lexeme());
+
+        consume(TokenType.LPAREN, "'(' after table name");
+        List<IdentifierNode> columns = new ArrayList<>();
+        if (!check(TokenType.RPAREN)) {
+            do {
+                Token colToken = consume(TokenType.IDENTIFIER, "column name");
+                columns.add(new IdentifierNode(colToken.lexeme()));
+            } while (match(TokenType.COMMA));
+        }
+        consume(TokenType.RPAREN, "')' after column list");
+
+        consume(TokenType.VALUES, "'VALUES' keyword");
+        consume(TokenType.LPAREN, "'(' before value list");
+        List<ExpressionNode> values = new ArrayList<>();
+        if (!check(TokenType.RPAREN)) {
+            do {
+                values.add(parsePrimaryExpression());
+            } while (match(TokenType.COMMA));
+        }
+        consume(TokenType.RPAREN, "')' after value list");
+
+        return new InsertStatementNode(tableName, columns, values);
+    }
+    // ======================================
+
+    // ====== 新增：DELETE 语句解析方法 ======
+    private DeleteStatementNode parseDeleteStatement() {
+        consume(TokenType.FROM, "'FROM' keyword");
+        Token tableNameToken = consume(TokenType.IDENTIFIER, "table name");
+        IdentifierNode tableName = new IdentifierNode(tableNameToken.lexeme());
+
+        ExpressionNode whereClause = null;
+        if (match(TokenType.WHERE)) {
+            whereClause = parseExpression();
+        }
+
+        return new DeleteStatementNode(tableName, whereClause);
+    }
+    // ======================================
+    // ====== 新增：表达式解析相关方法 ======
+    private ExpressionNode parseExpression() {
+        return parseComparison();
     }
 
-
+    private ExpressionNode parseComparison() {
+        ExpressionNode left = parsePrimaryExpression();
+        if (match(TokenType.GREATER, TokenType.GREATER_EQUAL, TokenType.LESS, TokenType.LESS_EQUAL, TokenType.EQUAL, TokenType.NOT_EQUAL)) {
+            Token operator = previous();
+            ExpressionNode right = parsePrimaryExpression();
+            left = new BinaryExpressionNode(left, operator, right);
+        }
+        return left;
+    }
+    // ====== 修改：增强主表达式解析以支持列名 ======
+    private ExpressionNode parsePrimaryExpression() {
+        if (match(TokenType.INTEGER_CONST, TokenType.STRING_CONST)) {
+            return new LiteralNode(previous());
+        }
+        if (match(TokenType.IDENTIFIER)) {
+            return new IdentifierNode(previous().lexeme());
+        }
+        throw new ParseException(peek(), "an expression (a literal or an identifier)");
+    }
     // --- 辅助方法 ---
-
     private boolean match(TokenType... types) {
         for (TokenType type : types) {
             if (check(type)) {

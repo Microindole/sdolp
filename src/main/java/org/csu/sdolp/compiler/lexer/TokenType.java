@@ -33,6 +33,12 @@ public enum TokenType {
     GREATER,    // >
     LESS,       // <
 
+    // ====== 符号和运算符 ======
+    ASTERISK,       // *
+    LESS_EQUAL,     // <=
+    GREATER_EQUAL,  // >=
+    // ============================
+
     // ---- 分隔符 (Delimiters) ----
     COMMA,      // ,
     SEMICOLON,  // ;
