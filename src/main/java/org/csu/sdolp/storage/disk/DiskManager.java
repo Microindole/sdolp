@@ -9,12 +9,17 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 
+import static org.csu.sdolp.storage.page.Page.PAGE_SIZE;
+
 /**
  * 磁盘管理器，封装底层的文件读写操作。
  */
 public class DiskManager {
     private final String dbFilePath;
     private RandomAccessFile dbFile;
+
+    private int nextFreePageId = 0;
+
 
     public DiskManager(String dbFilePath) {
         this.dbFilePath = dbFilePath;
@@ -27,6 +32,7 @@ public class DiskManager {
             file.createNewFile();
         }
         this.dbFile = new RandomAccessFile(file, "rw");
+        this.nextFreePageId = (int) (dbFile.length() / PAGE_SIZE);
     }
 
     public void close() throws IOException {
@@ -40,7 +46,7 @@ public class DiskManager {
      * @param page 要写入的Page对象
      */
     public void writePage(Page page) throws IOException {
-        long offset = (long) page.getPageId().getPageNum() * Page.PAGE_SIZE;
+        long offset = (long) page.getPageId().getPageNum() * PAGE_SIZE;
         dbFile.seek(offset);
         dbFile.write(page.getData().array());
     }
@@ -51,8 +57,8 @@ public class DiskManager {
      * @return 读取到的Page对象
      */
     public Page readPage(PageId pageId) throws IOException {
-        long offset = (long) pageId.getPageNum() * Page.PAGE_SIZE;
-        byte[] pageData = new byte[Page.PAGE_SIZE];
+        long offset = (long) pageId.getPageNum() * PAGE_SIZE;
+        byte[] pageData = new byte[PAGE_SIZE];
         dbFile.seek(offset);
         dbFile.readFully(pageData);
         return new Page(pageId, pageData);
@@ -62,10 +68,8 @@ public class DiskManager {
      * 分配一个新页的页号。
      * @return 新分配的页ID
      */
-    public PageId allocatePage() throws IOException {
-        // TODO: 计算文件当前大小，并确定下一个可用的页号。
-        long numPages = dbFile.length() / Page.PAGE_SIZE;
-        return new PageId((int) numPages);
+    public synchronized PageId allocatePage() throws IOException {
+        return new PageId(nextFreePageId++);
     }
 
     // TODO: 实现其他方法，如释放页等。

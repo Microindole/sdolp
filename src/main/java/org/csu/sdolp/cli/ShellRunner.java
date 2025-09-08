@@ -80,18 +80,29 @@ public class ShellRunner implements CommandLineRunner {
 
         // 2.1. 顺序访问4个页，触发替换
         System.out.println("缓存池大小: 3，使用 FIFO 策略。");
-        for (int i = 0; i < 4; i++) {
+        for (int i = 1; i <= 4; i++) { // 从1开始，因为页0在步骤1中已创建
             Page page = bufferPoolManager.newPage();
-            page.getData().put(0, (byte) (65 + i)); // 写入 'A', 'B', 'C', 'D'
-            System.out.println("分配并访问新页: " + page.getPageId().getPageNum());
+            int pageNum = page.getPageId().getPageNum();
+            page.getData().put(0, (byte) (65 + i)); // 写入 'B', 'C', 'D', 'E'
+            System.out.println("分配并访问新页: " + pageNum);
         }
 
-        // 2.2. 再次访问第一个页（页0），验证它是否已被淘汰并从磁盘加载
-        System.out.println("再次访问页 0，预期它已被淘汰并从磁盘重新加载。");
-        Page firstPage = bufferPoolManager.getPage(new PageId(0));
-        byte data = firstPage.getData().get(0);
-        System.out.println("从页 0 读取的数据: " + (char) data);
-        assert data == 'A' : "FIFO 替换策略验证失败！";
+        // 此时缓存池中应有页 2, 3, 4。页 1 已经因为 FIFO 策略被淘汰。
+
+        // 2.2. 再次访问第一个被淘汰的页（页1），验证它是否已被淘汰并从磁盘加载
+        System.out.println("再次访问页 1，预期它已被淘汰并从磁盘重新加载。");
+        PageId evictedPageId = new PageId(1);
+        Page evictedPage = bufferPoolManager.getPage(evictedPageId);
+        byte data = evictedPage.getData().get(0);
+        System.out.println("从页 1 读取的数据: " + (char) data);
+
+        // 2.3. 验证数据是否正确
+        // 预期的结果是字符 'B'，因为页 1 被写入了 'B'
+        if (data == 'B') {
+            System.out.println("缓存替换测试通过，结果符合预期。");
+        } else {
+            System.err.println("缓存替换测试失败！");
+        }
 
         diskManager.close();
     }
