@@ -1,0 +1,122 @@
+package org.csu.sdolp.compiler.planner;
+
+import org.csu.sdolp.catalog.Catalog;
+import org.csu.sdolp.catalog.TableInfo;
+import org.csu.sdolp.common.model.Column;
+import org.csu.sdolp.common.model.DataType;
+import org.csu.sdolp.common.model.Schema;
+import org.csu.sdolp.common.model.Tuple;
+import org.csu.sdolp.common.model.Value;
+import org.csu.sdolp.compiler.lexer.TokenType;
+import org.csu.sdolp.compiler.parser.ast.*;
+import org.csu.sdolp.compiler.planner.plan.*;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
+
+/**
+ * @author hidyouth
+ * @description: 执行计划生成器
+ * 负责将经过语义分析的AST转换为物理执行计划
+ */
+public class Planner {
+
+    private final Catalog catalog;
+
+    public Planner(Catalog catalog) {
+        this.catalog = catalog;
+    }
+
+    public PlanNode createPlan(StatementNode ast) {
+        if (ast instanceof CreateTableStatementNode stmt) {
+            return createTablePlan(stmt);
+        }
+        if (ast instanceof InsertStatementNode stmt) {
+            return createInsertPlan(stmt);
+        }
+        if (ast instanceof SelectStatementNode stmt) {
+            return createSelectPlan(stmt);
+        }
+        if (ast instanceof DeleteStatementNode stmt) {
+            // 简化：DELETE 目前可以看作是找到所有要删除的行，然后逐条删除
+            // 它的计划可以先构建一个查找计划
+            return createDeletePlan(stmt);
+        }
+        throw new UnsupportedOperationException("Unsupported statement type for planning: " + ast.getClass().getSimpleName());
+    }
+
+    private PlanNode createTablePlan(CreateTableStatementNode ast) {
+        String tableName = ast.tableName().name();
+        List<Column> columns = ast.columns().stream()
+                .map(colDef -> new Column(
+                        colDef.columnName().name(),
+                        DataType.valueOf(colDef.dataType().name().toUpperCase())))
+                .collect(Collectors.toList());
+        Schema schema = new Schema(columns);
+        return new CreateTablePlanNode(tableName, schema);
+    }
+
+    private PlanNode createInsertPlan(InsertStatementNode ast) {
+        TableInfo tableInfo = catalog.getTable(ast.tableName().name());
+        List<Value> values = new ArrayList<>();
+        for (ExpressionNode expr : ast.values()) {
+            if (expr instanceof LiteralNode literal) {
+                if (literal.literal().type() == TokenType.INTEGER_CONST) {
+                    values.add(new Value(Integer.parseInt(literal.literal().lexeme())));
+                } else if (literal.literal().type() == TokenType.STRING_CONST) {
+                    values.add(new Value(literal.literal().lexeme()));
+                }
+            }
+        }
+        Tuple tuple = new Tuple(values);
+        return new InsertPlanNode(tableInfo, List.of(tuple));
+    }
+
+    private PlanNode createSelectPlan(SelectStatementNode ast) {
+        // 1. FROM 子句 -> SeqScan
+        TableInfo tableInfo = catalog.getTable(ast.fromTable().name());
+        PlanNode plan = new SeqScanPlanNode(tableInfo);
+
+        // 2. WHERE 子句 -> Filter
+        if (ast.whereClause() != null) {
+            plan = new FilterPlanNode(plan, ast.whereClause());
+        }
+
+        // 3. SELECT 子句 -> Project
+        if (ast.isSelectAll()) {
+            // SELECT * 的情况，输出 Schema 就是表的原始 Schema
+            // 所以 SeqScan 或 Filter 的输出 Schema 已经是正确的，无需再加 ProjectNode
+            return plan;
+        } else {
+            // 构造投影后的 Schema
+            List<Column> projectedColumns = new ArrayList<>();
+            for (ExpressionNode expr : ast.selectList()) {
+                if (expr instanceof IdentifierNode idNode) {
+                    // 从表的原始 Schema 中找到对应的列
+                    Column originalColumn = tableInfo.getSchema().getColumns().stream()
+                            .filter(c -> c.getName().equalsIgnoreCase(idNode.name()))
+                            .findFirst().orElseThrow(); // 语义分析已保证列存在
+                    projectedColumns.add(originalColumn);
+                }
+            }
+            Schema projectedSchema = new Schema(projectedColumns);
+            plan = new ProjectPlanNode(plan, projectedSchema);
+        }
+
+        return plan;
+    }
+
+    private PlanNode createDeletePlan(DeleteStatementNode ast) {
+        // DELETE 的计划可以看作是先找到所有要删除的元组
+        // 所以它的计划和 SELECT 几乎一样，只是顶层节点不同
+        // 在执行器层面，会用这个计划找到元组，然后执行删除
+        TableInfo tableInfo = catalog.getTable(ast.tableName().name());
+        PlanNode plan = new SeqScanPlanNode(tableInfo);
+        if (ast.whereClause() != null) {
+            plan = new FilterPlanNode(plan, ast.whereClause());
+        }
+        // TODO: 在执行器层面，可以再包装一层 DeleteExecutorNode
+        return plan;
+    }
+}
