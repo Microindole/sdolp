@@ -1,60 +1,160 @@
 package org.csu.sdolp.transaction.log;
 
 import org.csu.sdolp.common.model.RID;
+import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 
 public class LogRecord {
     public enum LogType {
-        INSERT, DELETE, UPDATE, COMMIT, ABORT, BEGIN
+        INVALID, INSERT, DELETE, UPDATE, COMMIT, ABORT, BEGIN
     }
 
-    private final LogType logType;
-    private final int transactionId;
-    private long prevLSN = -1; // 上一条日志的 LSN
+    // --- Header ---
+    private int recordSize = 0; // 整个记录的大小
+    private long lsn = -1;      // 日志序列号
+    private int transactionId;
+    private long prevLSN = -1;  // 该事务的上一条日志的 LSN
+    private LogType logType;
 
-    // for INSERT/DELETE
+    // --- Payload for INSERT/DELETE ---
     private RID rid;
-    private Tuple tuple;
+    private Tuple tuple; // INSERT: new tuple, DELETE: old tuple
 
-    // for UPDATE
+    // --- Payload for UPDATE ---
     private Tuple oldTuple;
     private Tuple newTuple;
 
     // 构造函数 for INSERT/DELETE
-    public LogRecord(LogType logType, int transactionId, RID rid, Tuple tuple) {
-        this.logType = logType;
+    public LogRecord(int transactionId, long prevLSN, LogType logType, RID rid, Tuple tuple) {
         this.transactionId = transactionId;
+        this.prevLSN = prevLSN;
+        this.logType = logType;
         this.rid = rid;
         this.tuple = tuple;
     }
 
     // 构造函数 for UPDATE
-    public LogRecord(LogType logType, int transactionId, RID rid, Tuple oldTuple, Tuple newTuple) {
-        this.logType = logType;
+    public LogRecord(int transactionId, long prevLSN, LogType logType, RID rid, Tuple oldTuple, Tuple newTuple) {
         this.transactionId = transactionId;
+        this.prevLSN = prevLSN;
+        this.logType = logType;
         this.rid = rid;
         this.oldTuple = oldTuple;
         this.newTuple = newTuple;
     }
 
     // 构造函数 for COMMIT/ABORT/BEGIN
-    public LogRecord(LogType logType, int transactionId) {
-        this.logType = logType;
+    public LogRecord(int transactionId, long prevLSN, LogType logType) {
         this.transactionId = transactionId;
+        this.prevLSN = prevLSN;
+        this.logType = logType;
     }
 
+    // 私有构造函数，用于反序列化
+    private LogRecord() {}
+
+
+    /**
+     * 将 LogRecord 序列化为字节数组.
+     * 格式:
+     * [ record_size (4) | LSN (8) | txn_id (4) | prev_lsn (8) | log_type (4) | payload... ]
+     */
     public byte[] toBytes() {
-        // 简化版序列化: [size | LogType | txnId | prevLSN | ...payload... ]
-        // 实际实现会更复杂
-        // 这里暂时返回一个空数组，重点在于API设计
-        return new byte[0];
+        // 预计算 payload 大小
+        int payloadSize = 0;
+        byte[] tupleBytes = null;
+        byte[] oldTupleBytes = null;
+        byte[] newTupleBytes = null;
+
+        if (logType == LogType.INSERT || logType == LogType.DELETE) {
+            tupleBytes = tuple.toBytes();
+            payloadSize = 8 + 4 + tupleBytes.length; // RID(8) + tuple_len(4) + tuple_data
+        } else if (logType == LogType.UPDATE) {
+            oldTupleBytes = oldTuple.toBytes();
+            newTupleBytes = newTuple.toBytes();
+            payloadSize = 8 + 4 + oldTupleBytes.length + 4 + newTupleBytes.length; // RID + old_len + old_data + new_len + new_data
+        }
+
+        recordSize = 28 + payloadSize; // 28 is the header size
+        ByteBuffer buffer = ByteBuffer.allocate(recordSize);
+
+        // --- 写入 Header ---
+        buffer.putInt(recordSize);
+        buffer.putLong(lsn);
+        buffer.putInt(transactionId);
+        buffer.putLong(prevLSN);
+        buffer.putInt(logType.ordinal());
+
+        // --- 写入 Payload ---
+        if (logType == LogType.INSERT || logType == LogType.DELETE) {
+            buffer.putInt(rid.pageNum());
+            buffer.putInt(rid.slotIndex());
+            buffer.putInt(tupleBytes.length);
+            buffer.put(tupleBytes);
+        } else if (logType == LogType.UPDATE) {
+            buffer.putInt(rid.pageNum());
+            buffer.putInt(rid.slotIndex());
+            buffer.putInt(oldTupleBytes.length);
+            buffer.put(oldTupleBytes);
+            buffer.putInt(newTupleBytes.length);
+            buffer.put(newTupleBytes);
+        }
+
+        return buffer.array();
     }
 
-    public static LogRecord fromBytes(byte[] data) {
-        // 简化版反序列化
-        return null;
+    /**
+     * 从 ByteBuffer 反序列化 LogRecord.
+     * @param buffer 包含日志数据的 ByteBuffer
+     * @param schemaMap (高级功能，用于恢复) 在简单场景下可以传入 null
+     * @return 反序列化后的 LogRecord 对象
+     */
+    public static LogRecord fromBytes(ByteBuffer buffer, Schema schema) {
+        LogRecord record = new LogRecord();
+        record.recordSize = buffer.getInt();
+        record.lsn = buffer.getLong();
+        record.transactionId = buffer.getInt();
+        record.prevLSN = buffer.getLong();
+        record.logType = LogType.values()[buffer.getInt()];
+
+        if (record.logType == LogType.INSERT || record.logType == LogType.DELETE) {
+            int pageNum = buffer.getInt();
+            int slotIndex = buffer.getInt();
+            record.rid = new RID(pageNum, slotIndex);
+            int tupleLen = buffer.getInt();
+            byte[] tupleBytes = new byte[tupleLen];
+            buffer.get(tupleBytes);
+            // 注意：这里的反序列化需要 Schema，在简化场景下，我们先假设能拿到
+            if (schema != null) {
+                record.tuple = Tuple.fromBytes(tupleBytes, schema);
+            }
+        } else if (record.logType == LogType.UPDATE) {
+            int pageNum = buffer.getInt();
+            int slotIndex = buffer.getInt();
+            record.rid = new RID(pageNum, slotIndex);
+
+            if (schema != null) {
+                int oldTupleLen = buffer.getInt();
+                byte[] oldTupleBytes = new byte[oldTupleLen];
+                buffer.get(oldTupleBytes);
+                record.oldTuple = Tuple.fromBytes(oldTupleBytes, schema);
+
+                int newTupleLen = buffer.getInt();
+                byte[] newTupleBytes = new byte[newTupleLen];
+                buffer.get(newTupleBytes);
+                record.newTuple = Tuple.fromBytes(newTupleBytes, schema);
+            }
+        }
+        return record;
     }
+
+    // Getters
+    public long getLsn() { return lsn; }
+    public void setLsn(long lsn) { this.lsn = lsn; }
+    public LogType getLogType() { return logType; }
+    public int getTransactionId() { return transactionId; }
 }

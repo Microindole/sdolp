@@ -14,6 +14,10 @@ import org.csu.sdolp.compiler.semantic.SemanticAnalyzer;
 import org.csu.sdolp.executor.TupleIterator;
 import org.csu.sdolp.storage.buffer.BufferPoolManager;
 import org.csu.sdolp.storage.disk.DiskManager;
+import org.csu.sdolp.transaction.LockManager;
+import org.csu.sdolp.transaction.Transaction;
+import org.csu.sdolp.transaction.TransactionManager;
+import org.csu.sdolp.transaction.log.LogManager;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -32,6 +36,10 @@ public class QueryProcessor {
     private final Planner planner;
     private final ExecutionEngine executionEngine;
 
+    private final LogManager logManager;
+    private final LockManager lockManager;
+    private final TransactionManager transactionManager;
+
     public QueryProcessor(String dbFilePath) {
         try {
             this.diskManager = new DiskManager(dbFilePath);
@@ -40,6 +48,9 @@ public class QueryProcessor {
             this.bufferPoolManager = new BufferPoolManager(bufferPoolSize, diskManager, "LRU");
             this.catalog = new Catalog(bufferPoolManager);
             this.planner = new Planner(catalog);
+            this.logManager = new LogManager(dbFilePath + ".log");
+            this.lockManager = new LockManager();
+            this.transactionManager = new TransactionManager(lockManager, logManager);
             this.executionEngine = new ExecutionEngine(bufferPoolManager, catalog);
         } catch (IOException e) {
             throw new RuntimeException("Failed to initialize database engine", e);
@@ -49,7 +60,9 @@ public class QueryProcessor {
     public void close() throws IOException{
         // 确保所有数据在关闭前都写入磁盘
         bufferPoolManager.flushAllPages();
+        logManager.flush(); // 关闭前也确保日志刷盘
         diskManager.close();
+        logManager.close();
     }
 
     /**
@@ -57,6 +70,7 @@ public class QueryProcessor {
      * @param sql 用户输入的SQL字符串
      */
     public void execute(String sql) {
+        Transaction txn = transactionManager.begin();
         try {
             System.out.println("Executing: " + sql);
 
@@ -82,6 +96,9 @@ public class QueryProcessor {
             TupleIterator executor = executionEngine.execute(plan);
             System.out.println("Execution plan executed.");
 
+            // 暂时简化，我们在执行后直接提交
+            transactionManager.commit(txn);
+
             // 6. 打印结果
             if (executor != null) {
                 printResults(executor);
@@ -90,6 +107,10 @@ public class QueryProcessor {
         } catch (ParseException | SemanticException | UnsupportedOperationException e) {
             System.err.println("Error: " + e.getMessage());
         } catch (Exception e) {
+            // ---- 发生任何错误时，中止事务 ----
+            System.err.println("Error occurred, aborting transaction " + txn.getTransactionId());
+            transactionManager.abort(txn);
+
             System.err.println("An unexpected error occurred: " + e.getMessage());
             e.printStackTrace();
         }

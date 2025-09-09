@@ -83,7 +83,7 @@ public class Page {
      * 可用空间 = 空闲空间指针 - (页头大小 + 已有槽位大小)
      * @return 剩余字节数
      */
-    private int getFreeSpace() {
+    public int getFreeSpace() {
         return getFreeSpacePointer() - (HEADER_SIZE + getNumTuples() * SLOT_SIZE);
     }
 

@@ -7,6 +7,9 @@ import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.storage.buffer.BufferPoolManager;
 import org.csu.sdolp.storage.page.Page;
 import org.csu.sdolp.storage.page.PageId;
+import org.csu.sdolp.transaction.Transaction;
+import org.csu.sdolp.transaction.log.LogManager;
+import org.csu.sdolp.transaction.log.LogRecord;
 
 import java.io.IOException;
 
@@ -19,79 +22,57 @@ public class TableHeap implements TupleIterator {
 
     private final BufferPoolManager bufferPoolManager;
     private final Schema schema;
-    private final PageId firstPageId;
+    private PageId firstPageId; // firstPageId 可能在表为空时被修改，所以不设为final
+    private final LogManager logManager;
 
     // --- 迭代器状态 ---
     private PageId currentPageId;
     private Page currentPage;
-    private int currentSlotIndex; // 使用槽位索引来代替 Iterator，以便获取RID
+    private int currentSlotIndex;
 
-    public TableHeap(BufferPoolManager bufferPoolManager, TableInfo tableInfo) throws IOException {
+    public TableHeap(BufferPoolManager bufferPoolManager, TableInfo tableInfo, LogManager logManager) throws IOException {
         this.bufferPoolManager = bufferPoolManager;
         this.schema = tableInfo.getSchema();
         this.firstPageId = tableInfo.getFirstPageId();
+        this.logManager = logManager;
 
-        // 初始化迭代器状态
         this.currentPageId = this.firstPageId;
         if (this.currentPageId != null && this.currentPageId.getPageNum() != -1) {
             this.currentPage = bufferPoolManager.getPage(this.currentPageId);
         } else {
-            this.currentPage = null; // 表是空的，没有任何页面
+            this.currentPage = null;
         }
         this.currentSlotIndex = 0;
     }
 
-    /**
-     * 获取表中的下一条有效元组。
-     * @return 下一条元组，如果不存在则返回 null。
-     */
+    // next() 和 hasNext() 方法保持不变，它们是只读操作
     @Override
     public Tuple next() throws IOException {
-        // hasNext() 方法会预先定位到下一个有效的元组
-        if (!hasNext()) {
-            return null;
-        }
-
-        // 从当前页面的当前槽位获取元组
+        if (!hasNext()) return null;
         Tuple tuple = currentPage.getTuple(currentSlotIndex, schema);
-        // 【核心】为元组附加其物理地址 RID
-        tuple.setRid(new RID(currentPageId.getPageNum(), currentSlotIndex));
-
-        // 将索引移动到下一个槽位，为下一次调用 next() 做准备
+        if (tuple != null) {
+            tuple.setRid(new RID(currentPageId.getPageNum(), currentSlotIndex));
+        }
         currentSlotIndex++;
         return tuple;
     }
 
-    /**
-     * 检查表中是否还有更多有效元组。
-     * 此方法会处理页面跳转和已删除元组的跳过。
-     * @return 如果还有元组，则返回 true。
-     */
     @Override
     public boolean hasNext() throws IOException {
-        if (currentPage == null) {
-            return false; // 表中没有任何页面
-        }
-
-        // 循环直到找到一个有效的元组或遍历完所有页面
+        if (currentPage == null) return false;
         while (true) {
-            // 检查当前页是否还有未扫描的槽位
             if (currentSlotIndex < currentPage.getNumTuples()) {
-                // 检查这个槽位的元组是否有效（未被删除）
                 if (currentPage.getTuple(currentSlotIndex, schema) != null) {
-                    return true; // 找到了一个有效的元组，hasNext()成功
+                    return true;
                 }
-                // 如果是已删除的元组，则跳到下一个槽位继续在本页查找
                 currentSlotIndex++;
             } else {
-                // 当前页已扫描完毕，尝试移动到下一页
                 int nextPageNum = currentPage.getNextPageId();
-                if (nextPageNum != -1) { // 检查是否存在下一页
+                if (nextPageNum != -1) {
                     currentPageId = new PageId(nextPageNum);
                     currentPage = bufferPoolManager.getPage(currentPageId);
-                    currentSlotIndex = 0; // 重置槽位索引，从新页面的第一个槽位开始
+                    currentSlotIndex = 0;
                 } else {
-                    // 没有下一页了，遍历结束
                     return false;
                 }
             }
@@ -99,81 +80,132 @@ public class TableHeap implements TupleIterator {
     }
 
     /**
-     * 向表中插入一条元组。
-     * 它会自动查找有可用空间的页面，如果所有页面都满了，则会分配新页。
+     * 向表中插入一条元组，并遵循WAL协议。
      * @param tuple 要插入的元组
+     * @param txn   当前事务
      * @return 插入成功返回 true
      */
-    public boolean insertTuple(Tuple tuple) throws IOException {
+    public boolean insertTuple(Tuple tuple, Transaction txn) throws IOException {
+        // 1. 找到一个可以容纳该元组的数据页
+        Page targetPage = findFreePageForInsert(tuple);
+        if (targetPage == null) {
+            return false;
+        }
+
+        // 2. 确定新元组的RID (页号 + 下一个可用的槽位索引)
+        RID rid = new RID(targetPage.getPageId().getPageNum(), targetPage.getNumTuples());
+        tuple.setRid(rid);
+
+        // 3.【WAL核心】在修改数据页之前，先写入日志记录
+        LogRecord logRecord = new LogRecord(txn.getTransactionId(), txn.getPrevLSN(), LogRecord.LogType.INSERT, rid, tuple);
+        long lsn = logManager.appendLogRecord(logRecord);
+        txn.setPrevLSN(lsn); // 更新事务的日志链
+
+        // 4.【物理修改】日志写入成功后，再实际地向数据页中插入元组
+        boolean success = targetPage.insertTuple(tuple);
+        if (success) {
+            // 标记页面为“脏页”，BufferPoolManager会在合适的时机将其写回磁盘
+            // 此处我们为简化，直接flush
+            bufferPoolManager.flushPage(targetPage.getPageId());
+        }
+        return success;
+    }
+
+    private Page findFreePageForInsert(Tuple tuple) throws IOException {
+        // ... (此辅助方法与上一版本相同)
+        byte[] tupleBytes = tuple.toBytes();
+        int requiredSpace = tupleBytes.length + 8; // 8 bytes for slot metadata
+
         PageId pid = this.firstPageId;
         Page lastPage = null;
 
         while (pid != null && pid.getPageNum() != -1) {
             Page page = bufferPoolManager.getPage(pid);
-            lastPage = page; // 记录下最后一页
-            // 尝试在当前页插入
-            if (page.insertTuple(tuple)) {
-                bufferPoolManager.flushPage(pid); // 确保数据持久化
-                return true;
+            lastPage = page;
+            if (page.getFreeSpace() >= requiredSpace) {
+                return page;
             }
-            // 当前页已满，移动到下一页
             int nextPageNum = page.getNextPageId();
             pid = (nextPageNum != -1) ? new PageId(nextPageNum) : null;
         }
 
-        // 如果循环结束，说明所有现有页面都满了，需要在 lastPage 后面链接一个新页
         Page newPage = bufferPoolManager.newPage();
-        if (newPage == null) {
-            return false; // 缓冲池也满了，插入失败
-        }
-        newPage.init(); // 初始化新页的头部 (在你的 Page 构造函数或新方法里实现)
+        if (newPage == null) return null;
+        newPage.init();
 
-        // 将新页链接到表的末尾
         if (lastPage != null) {
             lastPage.setNextPageId(newPage.getPageId().getPageNum());
             bufferPoolManager.flushPage(lastPage.getPageId());
         } else {
-            // 这是表的第一页，需要更新 Catalog (这部分逻辑通常在 Catalog.createTable 中处理)
-            // 此处简化，假设 createTable 时已创建了第一页
+            // 这是表的第一页，需要更新 firstPageId
+            this.firstPageId = newPage.getPageId();
+            // 注意：这个修改需要通知Catalog，在更完整的系统中，
+            // Catalog.createTable会创建第一页，并记录其ID。
         }
 
-        // 在新页中插入元组
-        if (newPage.insertTuple(tuple)) {
-            bufferPoolManager.flushPage(newPage.getPageId());
-            return true;
-        } else {
-            // 如果一个全新的空页都无法插入，说明元组本身太大了
+        if (newPage.getFreeSpace() < requiredSpace) {
             throw new IllegalStateException("Tuple is too large to fit in a new page.");
         }
+        return newPage;
     }
 
+
     /**
-     * 根据 RID 删除一条元组 (标记删除)
+     * 根据RID删除一条元组，并遵循WAL协议。
      * @param rid 要删除元组的物理地址
+     * @param txn 当前事务
      * @return 删除成功返回 true
      */
-    public boolean deleteTuple(RID rid) throws IOException {
+    public boolean deleteTuple(RID rid, Transaction txn) throws IOException {
         Page page = bufferPoolManager.getPage(new PageId(rid.pageNum()));
+        Tuple oldTuple = page.getTuple(rid.slotIndex(), schema);
+        if (oldTuple == null) {
+            return false; // 元组不存在或已被删除
+        }
+
+        // 1.【WAL核心】在修改数据页之前，先写入日志记录
+        LogRecord logRecord = new LogRecord(txn.getTransactionId(), txn.getPrevLSN(), LogRecord.LogType.DELETE, rid, oldTuple);
+        long lsn = logManager.appendLogRecord(logRecord);
+        txn.setPrevLSN(lsn);
+
+        // 2.【物理修改】日志写入成功后，再标记元组为已删除
         boolean success = page.markTupleAsDeleted(rid.slotIndex());
         if (success) {
-            // 将修改后的页面标记为“脏页”，以便写回磁盘
             bufferPoolManager.flushPage(page.getPageId());
         }
         return success;
     }
 
     /**
-     * 根据 RID 更新一条元组 (策略：先删除旧的，再插入新的)
+     * 根据RID更新一条元组，并遵循WAL协议。
      * @param newTuple 新的元组数据
      * @param rid      旧元组的物理地址
+     * @param txn      当前事务
      * @return 更新成功返回 true
      */
-    public boolean updateTuple(Tuple newTuple, RID rid) throws IOException {
-        // 注意：这个简单的策略可能会改变元组的 RID，并且在并发环境下有问题。
-        // 但对于单用户数据库来说，这是最直接的实现方式。
-        if (deleteTuple(rid)) {
-            // insertTuple 会负责找到空间并插入
-            return insertTuple(newTuple);
+    public boolean updateTuple(Tuple newTuple, RID rid, Transaction txn) throws IOException {
+        Page page = bufferPoolManager.getPage(new PageId(rid.pageNum()));
+        Tuple oldTuple = page.getTuple(rid.slotIndex(), schema);
+        if (oldTuple == null) {
+            return false;
+        }
+
+        // 1.【WAL核心】在修改数据页之前，写入UPDATE日志
+        LogRecord logRecord = new LogRecord(txn.getTransactionId(), txn.getPrevLSN(), LogRecord.LogType.UPDATE, rid, oldTuple, newTuple);
+        long lsn = logManager.appendLogRecord(logRecord);
+        txn.setPrevLSN(lsn);
+
+        // 2.【物理修改】采用先删除后插入的简化策略
+        // 注意：这可能会改变元组的RID，对于更复杂的系统，需要实现就地更新(in-place update)
+        if (page.markTupleAsDeleted(rid.slotIndex())) {
+            if (page.insertTuple(newTuple)) {
+                bufferPoolManager.flushPage(page.getPageId());
+                return true;
+            } else {
+                // 如果当前页空间不足，回滚删除操作（需要补偿日志），然后在新页面插入
+                // 为简化，我们直接在其他页面插入
+                return insertTuple(newTuple, txn);
+            }
         }
         return false;
     }
