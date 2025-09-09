@@ -93,10 +93,8 @@ public class ShellRunner implements CommandLineRunner {
         PageId evictedPageId = new PageId(0);
         Page evictedPage = bufferPoolManager.getPage(evictedPageId); // 这会产生一次 miss
 
-        // --- ↓↓↓ 新增代码，再次访问，这次应该是 hit ↓↓↓ ---
         System.out.println("再次访问页 0，这次应该命中缓存。");
-        bufferPoolManager.getPage(evictedPageId); // 这会产生一次 hit
-        // --- ↑↑↑ 新增代码 ↑↑↑ ---
+        bufferPoolManager.getPage(evictedPageId);
 
         byte data = evictedPage.getData().get(0);
         System.out.println("从页 0 读取的数据: " + (char) data);
@@ -108,12 +106,10 @@ public class ShellRunner implements CommandLineRunner {
             System.err.println("缓存替换测试失败！");
         }
 
-        // --- ↓↓↓ 新增代码，打印最终的统计信息 ↓↓↓ ---
         System.out.println("\n--- 缓存统计信息 ---");
         System.out.println("命中次数: " + bufferPoolManager.getHitCount());
         System.out.println("未命中次数: " + bufferPoolManager.getMissCount());
         System.out.printf("缓存命中率: %.2f%%\n", bufferPoolManager.getHitRate() * 100);
-        // --- ↑↑↑ 新增代码 ↑↑↑ ---
 
         diskManager.close();
         new File(TEST_DB_FILE_REPLACEMENT).delete();
