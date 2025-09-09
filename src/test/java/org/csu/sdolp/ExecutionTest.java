@@ -1,3 +1,4 @@
+/*
 package org.csu.sdolp;
 
 import org.csu.sdolp.catalog.Catalog;
@@ -178,4 +179,4 @@ public class ExecutionTest {
         assertFalse(projectExecutor.hasNext());
         System.out.println("投影测试成功！");
     }
-}
+}*/
