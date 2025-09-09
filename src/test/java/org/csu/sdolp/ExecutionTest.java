@@ -1,4 +1,3 @@
-/*
 package org.csu.sdolp;
 
 import org.csu.sdolp.catalog.Catalog;
@@ -125,7 +124,7 @@ public class ExecutionTest {
 
         // 4. 使用 FilterExecutor 查找 id = 170 的记录
         SeqScanExecutor seqScanFilter = new SeqScanExecutor(bufferPoolManager, tableInfo);
-        ComparisonPredicate predicate = new ComparisonPredicate(0, new Value(170)); // id 在第0列
+        ComparisonPredicate predicate = new ComparisonPredicate(0, new Value(170),"EQUAL"); // id 在第0列
         FilterExecutor filterExecutor = new FilterExecutor(seqScanFilter, predicate);
 
         // 5. 验证过滤结果
@@ -179,4 +178,4 @@ public class ExecutionTest {
         assertFalse(projectExecutor.hasNext());
         System.out.println("投影测试成功！");
     }
-}*/
+}
