@@ -39,12 +39,36 @@ public class TableHeap implements TupleIterator {
      */
     public boolean insertTuple(Tuple tuple) throws IOException {
         PageId pid = tableInfo.getFirstPageId(); // 简化实现：总是从第一页尝试插入
-        Page page = bufferPoolManager.getPage(pid);
-        
-        // TODO: 实际应遍历所有页，找到有空间的页，或在所有页都满时分配新页
-        boolean success = page.insertTuple(tuple);
-        bufferPoolManager.flushPage(pid); // 确保写入持久化
-        return success;
+        while (true) {
+            Page page = bufferPoolManager.getPage(pid);
+            // 尝试在当前页插入
+            if (page.insertTuple(tuple)) {
+                bufferPoolManager.flushPage(pid); // 确保数据持久化
+                return true;
+            }
+
+            // 当前页已满，获取下一页ID
+            int nextPageNum = page.getNextPageId();
+            if (nextPageNum != -1) { // 如果存在下一页
+                pid = new PageId(nextPageNum);
+            } else { // 如果不存在下一页，说明已到达链表末尾
+                // 1. 分配一个新页
+                Page newPage = bufferPoolManager.newPage();
+                // 2. 将旧页的 next_page_id 指向新页
+                page.setNextPageId(newPage.getPageId().getPageNum());
+                bufferPoolManager.flushPage(pid); // 将旧页的更新持久化
+
+                // 3. 在新页中插入元组
+                pid = newPage.getPageId();
+                if(newPage.insertTuple(tuple)) {
+                    bufferPoolManager.flushPage(pid);
+                    return true;
+                } else {
+                    // 如果一个全新的空页都无法插入，说明元组本身太大了
+                    throw new IllegalStateException("Tuple is too large to fit in a new page.");
+                }
+            }
+        }
     }
 
 
@@ -61,10 +85,24 @@ public class TableHeap implements TupleIterator {
         if (currentPageTupleIterator == null) {
             return false;
         }
+
+        // 如果当前页的迭代器还有元素，直接返回 true
         if (currentPageTupleIterator.hasNext()) {
             return true;
         }
-        // TODO: 当前页已遍历完，需要加载下一页 (本次简化，只读第一页)
+
+        // 当前页已遍历完，尝试加载下一页
+        Page currentPage = bufferPoolManager.getPage(currentPageId);
+        int nextPageNum = currentPage.getNextPageId();
+
+        if (nextPageNum != -1) {
+            currentPageId = new PageId(nextPageNum);
+            loadPageIterator(currentPageId);
+            // 加载新页后，再次检查新页的迭代器
+            return currentPageTupleIterator.hasNext();
+        }
+
+        // 没有下一页了
         return false;
     }
 

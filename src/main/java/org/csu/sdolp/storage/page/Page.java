@@ -16,7 +16,8 @@ public class Page {
     public static final int PAGE_SIZE = 4096;//  [cite_start] // 4KB [cite: 78, 124]
     private static final int HEADER_NUM_TUPLES_OFFSET = 0;
     private static final int HEADER_FREE_SPACE_POINTER_OFFSET = 4;
-    private static final int HEADER_SIZE = 8;
+    private static final int HEADER_NEXT_PAGE_ID_OFFSET = 8;
+    private static final int HEADER_SIZE = 12;
     private static final int SLOT_SIZE = 8; // 4 bytes for offset, 4 bytes for length
 
     private final PageId pageId;
@@ -28,6 +29,7 @@ public class Page {
         // 初始化页头
         setNumTuples(0);
         setFreeSpacePointer(PAGE_SIZE);
+        setNextPageId(-1);
     }
 
     public Page(PageId pageId, byte[] rawData) {
@@ -143,5 +145,13 @@ public class Page {
             tuples.add(getTuple(i, schema));
         }
         return tuples;
+    }
+
+    public int getNextPageId() {
+        return data.getInt(HEADER_NEXT_PAGE_ID_OFFSET);
+    }
+
+    public void setNextPageId(int nextPageId) {
+        data.putInt(HEADER_NEXT_PAGE_ID_OFFSET, nextPageId);
     }
 }

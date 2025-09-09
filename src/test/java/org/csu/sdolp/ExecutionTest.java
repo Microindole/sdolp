@@ -3,8 +3,10 @@ package org.csu.sdolp;
 import org.csu.sdolp.catalog.Catalog;
 import org.csu.sdolp.catalog.TableInfo;
 import org.csu.sdolp.common.model.*;
+import org.csu.sdolp.executor.FilterExecutor;
 import org.csu.sdolp.executor.SeqScanExecutor;
 import org.csu.sdolp.executor.TableHeap;
+import org.csu.sdolp.executor.expressions.ComparisonPredicate;
 import org.csu.sdolp.storage.buffer.BufferPoolManager;
 import org.csu.sdolp.storage.disk.DiskManager;
 import org.junit.jupiter.api.AfterEach;
@@ -80,5 +82,58 @@ public class ExecutionTest {
         
         assertFalse(seqScan.hasNext(), "不应该再有更多元组了");
         System.out.println("顺序扫描测试成功！");
+    }
+
+    @Test
+    void testFilterAndMultiPageScan() throws IOException {
+        // 1. 创建表
+        String tableName = "users";
+        Schema schema = new Schema(Arrays.asList(
+                new Column("id", DataType.INT),
+                new Column("name", DataType.VARCHAR)
+        ));
+        catalog.createTable(tableName, schema);
+        TableInfo tableInfo = catalog.getTable(tableName);
+        TableHeap tableHeap = new TableHeap(bufferPoolManager, tableInfo);
+
+        // 2. 插入大量数据，确保会跨页
+        // 一个简单的元组 (int, 10字节varchar) 大约需要 4 + (4+10) = 18字节
+        // 一页大约能放 4000 / (18+8) ~= 150 个元组。我们插入200个。
+        Tuple targetTuple = null;
+        for (int i = 0; i < 200; i++) {
+            Tuple tuple = new Tuple(Arrays.asList(new Value(i), new Value("user" + i)));
+            tableHeap.insertTuple(tuple);
+            if (i == 170) {
+                targetTuple = tuple; // 我们要查找的目标元组，它很可能在第二页
+            }
+        }
+        System.out.println("200条记录已插入，应该已跨页。");
+
+        // 3. 测试全表扫描 (不带过滤)
+        SeqScanExecutor seqScanAll = new SeqScanExecutor(bufferPoolManager, tableInfo);
+        int count = 0;
+        while(seqScanAll.hasNext()){
+            seqScanAll.next();
+            count++;
+        }
+        assertEquals(200, count, "全表扫描应该能读取所有200条记录");
+        System.out.println("跨页全表扫描成功！");
+
+
+        // 4. 使用 FilterExecutor 查找 id = 170 的记录
+        SeqScanExecutor seqScanFilter = new SeqScanExecutor(bufferPoolManager, tableInfo);
+        ComparisonPredicate predicate = new ComparisonPredicate(0, new Value(170)); // id 在第0列
+        FilterExecutor filterExecutor = new FilterExecutor(seqScanFilter, predicate);
+
+        // 5. 验证过滤结果
+        assertTrue(filterExecutor.hasNext(), "应该能找到 id=170 的记录");
+        Tuple result = filterExecutor.next();
+        assertNotNull(result);
+        assertEquals(170, result.getValues().get(0).getValue());
+        assertEquals("user170", result.getValues().get(1).getValue());
+        System.out.println("通过FilterExecutor成功找到元组: " + result);
+
+        assertFalse(filterExecutor.hasNext(), "只应该有一条 id=170 的记录");
+        System.out.println("过滤查询测试成功！");
     }
 }
