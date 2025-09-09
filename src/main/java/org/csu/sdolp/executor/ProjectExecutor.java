@@ -8,8 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * @author hidyouth
- * @description: 投影执行器，根据指定的列索引，从子执行器返回的元组中提取列。
+ * 投影执行器，根据指定的列索引，从子执行器返回的元组中提取列。
  */
 public class ProjectExecutor implements TupleIterator {
     private final TupleIterator child;

@@ -1,34 +1,23 @@
 package org.csu.sdolp.engine;
 
 import org.csu.sdolp.catalog.Catalog;
-import org.csu.sdolp.catalog.TableInfo;
 import org.csu.sdolp.common.exception.ParseException;
 import org.csu.sdolp.common.exception.SemanticException;
-import org.csu.sdolp.common.model.Column;
-import org.csu.sdolp.common.model.DataType;
-import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
-import org.csu.sdolp.common.model.Value;
 import org.csu.sdolp.compiler.lexer.Lexer;
 import org.csu.sdolp.compiler.lexer.Token;
 import org.csu.sdolp.compiler.parser.Parser;
-import org.csu.sdolp.compiler.parser.ast.*;
+import org.csu.sdolp.compiler.parser.ast.StatementNode;
+import org.csu.sdolp.compiler.planner.Planner;
+import org.csu.sdolp.compiler.planner.plan.PlanNode;
 import org.csu.sdolp.compiler.semantic.SemanticAnalyzer;
-import org.csu.sdolp.executor.FilterExecutor;
-import org.csu.sdolp.executor.SeqScanExecutor;
-import org.csu.sdolp.executor.DeleteExecutor;
-import org.csu.sdolp.executor.UpdateExecutor;
-import org.csu.sdolp.executor.TableHeap;
 import org.csu.sdolp.executor.TupleIterator;
-import org.csu.sdolp.executor.expressions.AbstractPredicate;
-import org.csu.sdolp.executor.expressions.ComparisonPredicate;
 import org.csu.sdolp.storage.buffer.BufferPoolManager;
 import org.csu.sdolp.storage.disk.DiskManager;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * 数据库查询处理器核心引擎。
@@ -40,22 +29,27 @@ public class QueryProcessor {
     private final DiskManager diskManager;
     private final BufferPoolManager bufferPoolManager;
     private final Catalog catalog;
+    private final Planner planner;
+    private final ExecutionEngine executionEngine;
 
-    /**
-     * 构造函数，初始化数据库引擎的底层组件。
-     * @param dbFilePath 数据库文件在磁盘上的路径
-     */
     public QueryProcessor(String dbFilePath) {
         try {
             this.diskManager = new DiskManager(dbFilePath);
             diskManager.open();
-            // 定义缓冲池大小，例如 100 个页
             final int bufferPoolSize = 100;
             this.bufferPoolManager = new BufferPoolManager(bufferPoolSize, diskManager, "LRU");
             this.catalog = new Catalog(bufferPoolManager);
+            this.planner = new Planner(catalog);
+            this.executionEngine = new ExecutionEngine(bufferPoolManager, catalog);
         } catch (IOException e) {
             throw new RuntimeException("Failed to initialize database engine", e);
         }
+    }
+
+    public void close() throws IOException{
+        // 确保所有数据在关闭前都写入磁盘
+        bufferPoolManager.flushAllPages();
+        diskManager.close();
     }
 
     /**
@@ -64,186 +58,43 @@ public class QueryProcessor {
      */
     public void execute(String sql) {
         try {
-            // --- 1. 编译阶段 (Compilation) ---
             System.out.println("Executing: " + sql);
-            // 1.1 词法分析: String -> List<Token>
+
+            // 1. 词法分析: String -> List<Token>
             Lexer lexer = new Lexer(sql);
             List<Token> tokens = lexer.tokenize();
 
-            // 1.2 语法分析: List<Token> -> Abstract Syntax Tree (AST)
+            // 2. 语法分析: List<Token> -> Abstract Syntax Tree (AST)
             Parser parser = new Parser(tokens);
             StatementNode ast = parser.parse();
+            if (ast == null) return;
 
-            // 1.3 语义分析: 检查AST的逻辑正确性
+            // 3. 语义分析: 检查AST的逻辑正确性
             SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(catalog);
             semanticAnalyzer.analyze(ast);
             System.out.println("Semantic analysis passed.");
 
-            // --- 2. 计划与执行阶段 (Planning & Execution) ---
-            // 2.1 创建执行计划
-            TupleIterator executionPlan = createExecutionPlan(ast);
+            // 4. 计划生成: AST -> PlanNode Tree
+            PlanNode plan = planner.createPlan(ast);
+            System.out.println("Logical plan created.");
 
-            // 2.2 执行计划
-            // 对于SELECT语句，执行并打印结果。对于其他语句，执行计划可能为null，但在planning阶段就已经生效了。
-            if (executionPlan != null) {
-                printResults(executionPlan);
+            // 5. 执行: PlanNode Tree -> TupleIterator Tree -> Results
+            TupleIterator executor = executionEngine.execute(plan);
+            System.out.println("Execution plan executed.");
+
+            // 6. 打印结果
+            if (executor != null) {
+                printResults(executor);
             }
 
-        } catch (ParseException | SemanticException | IOException e) {
-            // 捕获并打印所有预期的异常
+        } catch (ParseException | SemanticException | UnsupportedOperationException e) {
             System.err.println("Error: " + e.getMessage());
         } catch (Exception e) {
-            // 捕获意外的运行时异常
             System.err.println("An unexpected error occurred: " + e.getMessage());
             e.printStackTrace();
         }
     }
 
-    /**
-     * 根据抽象语法树(AST)创建物理执行计划（一个执行器树）。
-     * @param ast 经过语义分析的AST节点
-     * @return 一个可执行的元组迭代器
-     */
-    private TupleIterator createExecutionPlan(StatementNode ast) throws IOException {
-        if (ast instanceof CreateTableStatementNode node) {
-            return planCreateTable(node);
-        }
-        if (ast instanceof InsertStatementNode node) {
-            return planInsert(node);
-        }
-        if (ast instanceof SelectStatementNode node) {
-            return planSelect(node);
-        }
-        if (ast instanceof DeleteStatementNode node) {
-            return planDelete(node);
-        }
-        if (ast instanceof UpdateStatementNode node) {
-            return planUpdate(node);
-        }
-        throw new UnsupportedOperationException("Unsupported statement type: " + ast.getClass().getSimpleName());
-    }
-
-    // --- 各类语句的计划生成方法 ---
-
-    private TupleIterator planCreateTable(CreateTableStatementNode node) throws IOException {
-        String tableName = node.tableName().name();
-        List<Column> columns = new ArrayList<>();
-        for (ColumnDefinitionNode colDef : node.columns()) {
-            String colName = colDef.columnName().name();
-            // 注意：DataType需要从字符串转换
-            DataType colType = DataType.valueOf(colDef.dataType().name().toUpperCase());
-            columns.add(new Column(colName, colType));
-        }
-        Schema schema = new Schema(columns);
-        catalog.createTable(tableName, schema);
-        System.out.println("Table '" + tableName + "' created successfully.");
-        return null; // DDL语句不返回元组
-    }
-
-    private TupleIterator planInsert(InsertStatementNode node) throws IOException {
-        String tableName = node.tableName().name();
-        TableInfo tableInfo = catalog.getTable(tableName);
-        Schema schema = tableInfo.getSchema();
-
-        // 将AST中的字面量转换为数据库内部的Value对象
-        List<Value> values = new ArrayList<>();
-        for (ExpressionNode expr : node.values()) {
-            if (expr instanceof LiteralNode literalNode) {
-                String lexeme = literalNode.literal().lexeme();
-                switch (literalNode.literal().type()) {
-                    case INTEGER_CONST -> values.add(new Value(Integer.parseInt(lexeme)));
-                    case STRING_CONST -> values.add(new Value(lexeme));
-                    default -> throw new IllegalStateException("Unsupported literal type during insert planning.");
-                }
-            }
-        }
-        Tuple tupleToInsert = new Tuple(values);
-
-        // 使用TableHeap直接插入 (这是简化版，未来会由InsertExecutor处理)
-        TableHeap tableHeap = new TableHeap(bufferPoolManager, tableInfo);
-        boolean success = tableHeap.insertTuple(tupleToInsert);
-
-        if (success) {
-            System.out.println("1 row inserted.");
-        } else {
-            System.out.println("Insert failed. The page might be full.");
-        }
-        return null; // DML语句不返回元组
-    }
-
-    // SELECT 语句现在只负责“查找”
-    private TupleIterator planSelect(SelectStatementNode node) throws IOException {
-        return createScanAndFilterPlan(node.fromTable().name(), node.whereClause());
-    }
-
-    private TupleIterator planDelete(DeleteStatementNode node) throws IOException {
-        // 1. 先创建一个计划来“查找”需要删除的元组
-        TupleIterator childPlan = createScanAndFilterPlan(node.tableName().name(), node.whereClause());
-
-        // 2. 获取TableHeap实例，以便执行物理删除
-        TableInfo tableInfo = catalog.getTable(node.tableName().name());
-        TableHeap tableHeap = new TableHeap(bufferPoolManager, tableInfo);
-
-        // 3. 在“查找”计划的上层包装一个 DeleteExecutor
-        return new DeleteExecutor(childPlan, tableHeap);
-    }
-    private TupleIterator planUpdate(UpdateStatementNode node) throws IOException {
-        // 1. 创建计划来“查找”需要更新的元组
-        TupleIterator childPlan = createScanAndFilterPlan(node.tableName().name(), node.whereClause());
-
-        // 2. 获取TableHeap和Schema实例
-        TableInfo tableInfo = catalog.getTable(node.tableName().name());
-        TableHeap tableHeap = new TableHeap(bufferPoolManager, tableInfo);
-
-        // 3. 在“查找”计划的上层包装一个 UpdateExecutor
-        return new UpdateExecutor(childPlan, tableHeap, tableInfo.getSchema(), node.setClauses());
-    }
-
-
-    private AbstractPredicate createPredicateFromAst(ExpressionNode expression, Schema schema) {
-        if (expression instanceof BinaryExpressionNode node) {
-            if (!(node.left() instanceof IdentifierNode) || !(node.right() instanceof LiteralNode)) {
-                throw new UnsupportedOperationException("WHERE clause only supports 'column_name op literal' format.");
-            }
-
-            // --- 修改开始 ---
-            String columnName = ((IdentifierNode) node.left()).name();
-            // 1. 从 Schema 中查找列名对应的索引
-            int columnIndex = getColumnIndex(schema, columnName);
-
-            // 2. 获取运算符和字面量值
-            String operator = node.operator().type().name();
-            Value literalValue = getLiteralValue((LiteralNode) node.right());
-
-            // 3. 使用新的构造函数创建 Predicate
-            return new ComparisonPredicate(columnIndex, literalValue, operator);
-            // --- 修改结束 ---
-        }
-        throw new UnsupportedOperationException("Unsupported expression type in WHERE clause.");
-    }
-    private int getColumnIndex(Schema schema, String columnName) {
-        for (int i = 0; i < schema.getColumns().size(); i++) {
-            if (schema.getColumns().get(i).getName().equalsIgnoreCase(columnName)) {
-                return i;
-            }
-        }
-        // 此异常理论上应在语义分析阶段被捕获
-        throw new IllegalStateException("Column '" + columnName + "' not found in schema during planning.");
-    }
-
-    private Value getLiteralValue(LiteralNode literalNode) {
-        String lexeme = literalNode.literal().lexeme();
-        return switch (literalNode.literal().type()) {
-            case INTEGER_CONST -> new Value(Integer.parseInt(lexeme));
-            case STRING_CONST -> new Value(lexeme);
-            default -> throw new IllegalStateException("Unsupported literal type in expression.");
-        };
-    }
-
-    /**
-     * 优雅地打印查询结果
-     * @param iterator 包含结果元组的迭代器
-     */
     private void printResults(TupleIterator iterator) throws IOException {
         List<Tuple> results = new ArrayList<>();
         while (iterator.hasNext()) {
@@ -251,30 +102,13 @@ public class QueryProcessor {
         }
 
         if (results.isEmpty()) {
-            System.out.println("Query finished, 0 rows returned.");
+            System.out.println("Query finished, 0 rows affected or returned.");
             return;
         }
 
-        // 简单打印
         for (Tuple tuple : results) {
-            System.out.println(tuple);
+            System.out.println(">> " + tuple);
         }
-        System.out.println("Query finished, " + results.size() + " rows returned.");
+        System.out.println("Query finished, " + results.size() + " rows returned/affected.");
     }
-
-    private TupleIterator createScanAndFilterPlan(String tableName, ExpressionNode whereClause) throws IOException {
-        TableInfo tableInfo = catalog.getTable(tableName);
-
-        // 基础执行器：顺序扫描 (通过 TableHeap)
-        TupleIterator plan = new SeqScanExecutor(bufferPoolManager, tableInfo);
-
-        // 如果存在 WHERE 子句，则在计划中添加 FilterExecutor
-        if (whereClause != null) {
-            AbstractPredicate predicate = createPredicateFromAst(whereClause, tableInfo.getSchema());
-            plan = new FilterExecutor(plan, predicate);
-        }
-
-        return plan;
-    }
-
 }

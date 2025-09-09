@@ -38,10 +38,11 @@ public class Planner {
         if (ast instanceof SelectStatementNode stmt) {
             return createSelectPlan(stmt);
         }
-        if (ast instanceof DeleteStatementNode stmt) {
-            // 简化：DELETE 目前可以看作是找到所有要删除的行，然后逐条删除
-            // 它的计划可以先构建一个查找计划
-            return createDeletePlan(stmt);
+        if (ast instanceof DeleteStatementNode) {
+            return createDeletePlan((DeleteStatementNode) ast); // 修改
+        }
+        if (ast instanceof UpdateStatementNode) { // 新增
+            return createUpdatePlan((UpdateStatementNode) ast);
         }
         throw new UnsupportedOperationException("Unsupported statement type for planning: " + ast.getClass().getSimpleName());
     }
@@ -108,15 +109,24 @@ public class Planner {
     }
 
     private PlanNode createDeletePlan(DeleteStatementNode ast) {
-        // DELETE 的计划可以看作是先找到所有要删除的元组
-        // 所以它的计划和 SELECT 几乎一样，只是顶层节点不同
-        // 在执行器层面，会用这个计划找到元组，然后执行删除
         TableInfo tableInfo = catalog.getTable(ast.tableName().name());
-        PlanNode plan = new SeqScanPlanNode(tableInfo);
+        // 1. 创建一个子计划来找到所有要删除的元组
+        PlanNode childPlan = new SeqScanPlanNode(tableInfo);
         if (ast.whereClause() != null) {
-            plan = new FilterPlanNode(plan, ast.whereClause());
+            childPlan = new FilterPlanNode(childPlan, ast.whereClause());
         }
-        // TODO: 在执行器层面，可以再包装一层 DeleteExecutorNode
-        return plan;
+        // 2. 用 DeletePlanNode 包装子计划
+        return new DeletePlanNode(childPlan, tableInfo);
+    }
+
+    private PlanNode createUpdatePlan(UpdateStatementNode ast) {
+        TableInfo tableInfo = catalog.getTable(ast.tableName().name());
+        // 1. 创建一个子计划来找到所有要更新的元组
+        PlanNode childPlan = new SeqScanPlanNode(tableInfo);
+        if (ast.whereClause() != null) {
+            childPlan = new FilterPlanNode(childPlan, ast.whereClause());
+        }
+        // 2. 用 UpdatePlanNode 包装子计划
+        return new UpdatePlanNode(childPlan, tableInfo, ast.setClauses());
     }
 }
