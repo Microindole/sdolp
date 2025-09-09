@@ -35,6 +35,8 @@ public class SemanticAnalyzer {
             analyzeSelect((SelectStatementNode) node);
         } else if (node instanceof DeleteStatementNode) {
             analyzeDelete((DeleteStatementNode) node);
+        } else if (node instanceof UpdateStatementNode) { // <-- 新增分支
+            analyzeUpdate((UpdateStatementNode) node);
         }
         // 可以扩展以支持其他语句类型
     }
@@ -107,6 +109,31 @@ public class SemanticAnalyzer {
     private void analyzeDelete(DeleteStatementNode node) {
         String tableName = node.tableName().name();
         TableInfo tableInfo = getTableOrThrow(tableName);
+
+        // 检查 WHERE 子句
+        if (node.whereClause() != null) {
+            analyzeExpression(node.whereClause(), tableInfo);
+        }
+    }
+
+    private void analyzeUpdate(UpdateStatementNode node) {
+        String tableName = node.tableName().name();
+        TableInfo tableInfo = getTableOrThrow(tableName);
+
+        // 检查 SET 子句中的列是否存在，并进行类型检查
+        for (SetClauseNode clause : node.setClauses()) {
+            Column column = checkColumnExists(tableInfo, clause.column().name());
+            DataType expectedType = column.getType();
+
+            if (!(clause.value() instanceof LiteralNode)) {
+                throw new SemanticException("SET clause currently only supports literal values.");
+            }
+            DataType actualType = getLiteralType((LiteralNode) clause.value());
+
+            if (expectedType != actualType) {
+                throw new SemanticException("Data type mismatch for column '" + column.getName() + "'. Expected " + expectedType + " but got " + actualType + ".");
+            }
+        }
 
         // 检查 WHERE 子句
         if (node.whereClause() != null) {

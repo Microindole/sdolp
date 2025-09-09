@@ -16,6 +16,8 @@ import org.csu.sdolp.compiler.parser.ast.*;
 import org.csu.sdolp.compiler.semantic.SemanticAnalyzer;
 import org.csu.sdolp.executor.FilterExecutor;
 import org.csu.sdolp.executor.SeqScanExecutor;
+import org.csu.sdolp.executor.DeleteExecutor;
+import org.csu.sdolp.executor.UpdateExecutor;
 import org.csu.sdolp.executor.TableHeap;
 import org.csu.sdolp.executor.TupleIterator;
 import org.csu.sdolp.executor.expressions.AbstractPredicate;
@@ -113,9 +115,10 @@ public class QueryProcessor {
             return planSelect(node);
         }
         if (ast instanceof DeleteStatementNode node) {
-            // TODO: 实现 Delete 语句的计划
-            System.out.println("DELETE statement execution is not yet implemented.");
-            return null;
+            return planDelete(node);
+        }
+        if (ast instanceof UpdateStatementNode node) {
+            return planUpdate(node);
         }
         throw new UnsupportedOperationException("Unsupported statement type: " + ast.getClass().getSimpleName());
     }
@@ -168,23 +171,32 @@ public class QueryProcessor {
         return null; // DML语句不返回元组
     }
 
+    // SELECT 语句现在只负责“查找”
     private TupleIterator planSelect(SelectStatementNode node) throws IOException {
-        String tableName = node.fromTable().name();
-        TableInfo tableInfo = catalog.getTable(tableName);
+        return createScanAndFilterPlan(node.fromTable().name(), node.whereClause());
+    }
 
-        // 基础执行器：顺序扫描
-        TupleIterator plan = new SeqScanExecutor(bufferPoolManager, tableInfo);
-        if (node.whereClause() != null) {
-            AbstractPredicate predicate = createPredicateFromAst(node.whereClause(), tableInfo.getSchema());
-            plan = new FilterExecutor(plan, predicate);
-        }
+    private TupleIterator planDelete(DeleteStatementNode node) throws IOException {
+        // 1. 先创建一个计划来“查找”需要删除的元组
+        TupleIterator childPlan = createScanAndFilterPlan(node.tableName().name(), node.whereClause());
 
-        // TODO: 增强2 - 添加ProjectionExecutor
-        // if (!node.isSelectAll()) {
-        //     plan = new ProjectionExecutor(plan, node.selectList());
-        // }
+        // 2. 获取TableHeap实例，以便执行物理删除
+        TableInfo tableInfo = catalog.getTable(node.tableName().name());
+        TableHeap tableHeap = new TableHeap(bufferPoolManager, tableInfo);
 
-        return plan;
+        // 3. 在“查找”计划的上层包装一个 DeleteExecutor
+        return new DeleteExecutor(childPlan, tableHeap);
+    }
+    private TupleIterator planUpdate(UpdateStatementNode node) throws IOException {
+        // 1. 创建计划来“查找”需要更新的元组
+        TupleIterator childPlan = createScanAndFilterPlan(node.tableName().name(), node.whereClause());
+
+        // 2. 获取TableHeap和Schema实例
+        TableInfo tableInfo = catalog.getTable(node.tableName().name());
+        TableHeap tableHeap = new TableHeap(bufferPoolManager, tableInfo);
+
+        // 3. 在“查找”计划的上层包装一个 UpdateExecutor
+        return new UpdateExecutor(childPlan, tableHeap, tableInfo.getSchema(), node.setClauses());
     }
 
 
@@ -249,4 +261,20 @@ public class QueryProcessor {
         }
         System.out.println("Query finished, " + results.size() + " rows returned.");
     }
+
+    private TupleIterator createScanAndFilterPlan(String tableName, ExpressionNode whereClause) throws IOException {
+        TableInfo tableInfo = catalog.getTable(tableName);
+
+        // 基础执行器：顺序扫描 (通过 TableHeap)
+        TupleIterator plan = new SeqScanExecutor(bufferPoolManager, tableInfo);
+
+        // 如果存在 WHERE 子句，则在计划中添加 FilterExecutor
+        if (whereClause != null) {
+            AbstractPredicate predicate = createPredicateFromAst(whereClause, tableInfo.getSchema());
+            plan = new FilterExecutor(plan, predicate);
+        }
+
+        return plan;
+    }
+
 }

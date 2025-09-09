@@ -32,6 +32,8 @@ public class Lexer {
         keywords.put("into", TokenType.INTO);
         keywords.put("values", TokenType.VALUES);
         keywords.put("delete", TokenType.DELETE);
+        keywords.put("update", TokenType.UPDATE);
+        keywords.put("set", TokenType.SET);
         keywords.put("int", TokenType.INT);
         keywords.put("varchar", TokenType.VARCHAR);
     }

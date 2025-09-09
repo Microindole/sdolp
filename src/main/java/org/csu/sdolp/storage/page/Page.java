@@ -37,8 +37,15 @@ public class Page {
         this.data = ByteBuffer.wrap(rawData);
     }
 
+    public void init() {
+        setNumTuples(0);
+        setFreeSpacePointer(PAGE_SIZE);
+        setNextPageId(-1);
+    }
+
+
     // --- 页头操作 ---
-    private int getNumTuples() {
+    public int getNumTuples() {
         return data.getInt(HEADER_NUM_TUPLES_OFFSET);
     }
 
@@ -124,6 +131,10 @@ public class Page {
         int offset = getTupleOffset(slotIndex);
         int length = getTupleLength(slotIndex);
 
+        if (length < 0) {
+            return null;
+        }
+
         // 使用 System.arraycopy 直接从页面的底层数组复制字节。
         // 这种方法不依赖也不修改 ByteBuffer 的内部状态（如 position），
         // 因此更加健壮，能避免共享状态带来的潜在问题。
@@ -142,10 +153,29 @@ public class Page {
         List<Tuple> tuples = new ArrayList<>();
         int numTuples = getNumTuples();
         for (int i = 0; i < numTuples; i++) {
-            tuples.add(getTuple(i, schema));
+            Tuple tuple = getTuple(i, schema);
+            if (tuple != null) {
+                tuples.add(tuple);
+            }
         }
         return tuples;
     }
+
+    //标记删除的方法
+    public boolean markTupleAsDeleted(int slotIndex) {
+        if (slotIndex >= getNumTuples()) {
+            return false;
+        }
+        int length = getTupleLength(slotIndex);
+        if (length < 0) {
+            return false;
+        }
+        // 将长度标记为负数来表示删除
+        setTupleLength(slotIndex, -length);
+        return true;
+    }
+
+
 
 
     public int getNextPageId() {

@@ -1,5 +1,8 @@
 package org.csu.sdolp.common.model;
 
+import lombok.Getter;
+import lombok.Setter;
+
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -12,10 +15,14 @@ import java.util.List;
  */
 public class Tuple {
     private final List<Value> values;
+    @Setter
+    @Getter
+    private RID rid;
 
     public Tuple(List<Value> values) {
         this.values = values;
     }
+
 
     public List<Value> getValues() {
         return values;
@@ -67,4 +74,7 @@ public class Tuple {
         sb.append("}");
         return sb.toString();
     }
+
+
+
 }

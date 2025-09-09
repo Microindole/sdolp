@@ -53,6 +53,9 @@ public class Parser {
         if (match(TokenType.DELETE)) {
             return parseDeleteStatement();
         }
+        if (match(TokenType.UPDATE)) { // <-- 新增分支
+            return parseUpdateStatement();
+        }
         // ===============================================
         // 在此可以扩展支持 INSERT, DELETE 等语句
         throw new ParseException(peek(), "a valid statement (CREATE, SELECT, INSERT, DELETE, etc.)");
@@ -185,6 +188,30 @@ public class Parser {
         return new DeleteStatementNode(tableName, whereClause);
     }
     // ======================================
+
+    // 新增方法：解析 UPDATE 语句
+    private UpdateStatementNode parseUpdateStatement() {
+        Token tableNameToken = consume(TokenType.IDENTIFIER, "table name after UPDATE");
+        IdentifierNode tableName = new IdentifierNode(tableNameToken.lexeme());
+
+        consume(TokenType.SET, "'SET' keyword");
+
+        List<SetClauseNode> setClauses = new ArrayList<>();
+        do {
+            Token colToken = consume(TokenType.IDENTIFIER, "column name in SET clause");
+            IdentifierNode column = new IdentifierNode(colToken.lexeme());
+            consume(TokenType.EQUAL, "'=' after column name");
+            ExpressionNode value = parsePrimaryExpression();
+            setClauses.add(new SetClauseNode(column, value));
+        } while (match(TokenType.COMMA));
+
+        ExpressionNode whereClause = null;
+        if (match(TokenType.WHERE)) {
+            whereClause = parseExpression();
+        }
+
+        return new UpdateStatementNode(tableName, setClauses, whereClause);
+    }
     // ====== 新增：表达式解析相关方法 ======
     private ExpressionNode parseExpression() {
         return parseComparison();

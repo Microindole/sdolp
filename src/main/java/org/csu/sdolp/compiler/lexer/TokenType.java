@@ -17,6 +17,8 @@ public enum TokenType {
     INTO,       // "INTO"
     VALUES,     // "VALUES"
     DELETE,     // "DELETE"
+    UPDATE,     // "UPDATE"
+    SET,        // "SET"
     INT,        // "INT" 数据类型
     VARCHAR,    // "VARCHAR" 数据类型
 
