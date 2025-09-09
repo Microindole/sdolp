@@ -4,6 +4,7 @@ import org.csu.sdolp.catalog.Catalog;
 import org.csu.sdolp.catalog.TableInfo;
 import org.csu.sdolp.common.model.*;
 import org.csu.sdolp.executor.FilterExecutor;
+import org.csu.sdolp.executor.ProjectExecutor;
 import org.csu.sdolp.executor.SeqScanExecutor;
 import org.csu.sdolp.executor.TableHeap;
 import org.csu.sdolp.executor.expressions.ComparisonPredicate;
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import java.io.File;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -135,5 +137,45 @@ public class ExecutionTest {
 
         assertFalse(filterExecutor.hasNext(), "只应该有一条 id=170 的记录");
         System.out.println("过滤查询测试成功！");
+    }
+
+    @Test
+    void testProjection() throws IOException {
+        // 1. 准备数据 (与之前的测试类似)
+        String tableName = "employees";
+        Schema schema = new Schema(Arrays.asList(
+                new Column("id", DataType.INT),
+                new Column("name", DataType.VARCHAR),
+                new Column("salary", DataType.INT)
+        ));
+        catalog.createTable(tableName, schema);
+        TableInfo tableInfo = catalog.getTable(tableName);
+        TableHeap tableHeap = new TableHeap(bufferPoolManager, tableInfo);
+        tableHeap.insertTuple(new Tuple(Arrays.asList(new Value(1), new Value("Alice"), new Value(8000))));
+        tableHeap.insertTuple(new Tuple(Arrays.asList(new Value(2), new Value("Bob"), new Value(9000))));
+
+        // 2. 构造执行器链: SeqScan -> Project
+        // 相当于执行: SELECT name, salary FROM employees;
+        SeqScanExecutor seqScan = new SeqScanExecutor(bufferPoolManager, tableInfo);
+        // "name" 是第1列 (索引1), "salary" 是第2列 (索引2)
+        ProjectExecutor projectExecutor = new ProjectExecutor(seqScan, List.of(1, 2));
+
+        // 3. 验证投影结果
+        assertTrue(projectExecutor.hasNext());
+        Tuple result1 = projectExecutor.next();
+        assertEquals(2, result1.getValues().size(), "投影后的元组应该只有2个值");
+        assertEquals("Alice", result1.getValues().get(0).getValue());
+        assertEquals(8000, result1.getValues().get(1).getValue());
+        System.out.println("投影后的元组 1: " + result1);
+
+        assertTrue(projectExecutor.hasNext());
+        Tuple result2 = projectExecutor.next();
+        assertEquals(2, result2.getValues().size());
+        assertEquals("Bob", result2.getValues().get(0).getValue());
+        assertEquals(9000, result2.getValues().get(1).getValue());
+        System.out.println("投影后的元组 2: " + result2);
+
+        assertFalse(projectExecutor.hasNext());
+        System.out.println("投影测试成功！");
     }
 }
