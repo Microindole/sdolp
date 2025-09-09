@@ -113,29 +113,12 @@ public class Catalog {
     }
 
     private void bootstrap() throws IOException {
-        // --- FIX START: Ensure distinct pages for meta-tables ---
-        // The root cause of the bug is that both meta-tables were being allocated
-        // to the same page (Page 0) during the initial bootstrap.
-
-        // We hardcode _catalog_tables to Page 0. To get a *different* page for
-        // _catalog_columns, we must advance the disk manager's internal page counter.
-        // The only public API to do this is newPage().
-
-        // The first call to newPage() will allocate and return Page 0.
-        // We will ignore the returned page object, but this action has the crucial
-        // side-effect of incrementing the DiskManager's internal counter to 1.
         bufferPoolManager.newPage();
 
-        // The second call to newPage() will now allocate and return Page 1.
-        // This is the page we will use for the columns table.
         columnsTableFirstPageId = bufferPoolManager.newPage().getPageId();
         if (columnsTableFirstPageId.getPageNum() != 1) {
-            // Sanity check for multi-threaded environments, though not expected in the test.
             throw new IllegalStateException("Catalog bootstrap failed: _catalog_columns table was not allocated to Page 1.");
         }
-        // --- FIX END ---
-
-        // Original logic continues, but now with correct, distinct page IDs.
         int tablesTableId = nextTableId.getAndIncrement();
         int columnsTableId = nextTableId.getAndIncrement();
 
@@ -154,12 +137,12 @@ public class Catalog {
 
         // 4. 将两个元数据表的 Schema 信息写入 Catalog Columns Table
         Page columnsPage = bufferPoolManager.getPage(columnsTableFirstPageId);
-        // 写入 tablesTableSchema
+
         int colIdx = 0;
         for (Column col : tablesTableSchema.getColumns()) {
             columnsPage.insertTuple(new Tuple(Arrays.asList(new Value(tablesTableId), new Value(col.getName()), new Value(col.getType().toString()), new Value(colIdx++))));
         }
-        // 写入 columnsTableSchema
+
         colIdx = 0;
         for (Column col : columnsTableSchema.getColumns()) {
             columnsPage.insertTuple(new Tuple(Arrays.asList(new Value(columnsTableId), new Value(col.getName()), new Value(col.getType().toString()), new Value(colIdx++))));
