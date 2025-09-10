@@ -47,6 +47,7 @@ public class TableHeap implements TupleIterator {
     public void initIterator(Transaction txn) throws IOException {
         this.iteratorTxn = txn;
         this.currentPageId = this.firstPageId;
+        this.currentSlotIndex = 0;
 
         try {
             if (this.currentPageId != null && this.currentPageId.getPageNum() != -1) {

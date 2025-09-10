@@ -28,33 +28,40 @@ public class InteractiveShell {
             StringBuilder commandBuilder = new StringBuilder();
 
             while (true) {
-                System.out.print("MiniDB-client> ");
+                System.out.print("miniDB-client> ");
                 String line = consoleScanner.nextLine();
 
                 commandBuilder.append(line.trim()).append(" ");
                 if (!line.trim().endsWith(";")) {
+                    System.out.print("           -> ");
                     continue;
                 }
 
-                String sql = commandBuilder.toString();
+                String allSqlCommands = commandBuilder.toString();
                 commandBuilder.setLength(0);
 
-                if (sql.equalsIgnoreCase("exit; ")) {
+                if (allSqlCommands.equalsIgnoreCase("exit; ")) {
                     break;
                 }
 
-                // 将SQL语句发送到服务器
-                out.println(sql);
+                String[] sqlStatements = allSqlCommands.split(";");
 
-                // 从服务器读取结果并打印
-                String serverResponse = in.readLine();
-                if (serverResponse != null) {
-                    // 将服务器返回的特殊标记替换回换行符
-                    System.out.println(serverResponse.replace("<br>", "\n"));
-                } else {
-                    System.out.println("Connection to server lost.");
-                    break;
+                for (String sql : sqlStatements) {
+                    String singleSql = sql.trim();
+                    if (singleSql.isEmpty()) {
+                        continue;
+                    }
+                    out.println(singleSql + ";");
+
+                    String serverResponse = in.readLine();
+                    if (serverResponse != null) {
+                        System.out.println(serverResponse.replace("<br>", "\n"));
+                    } else {
+                        System.out.println("Connection to server lost.");
+                        return;
+                    }
                 }
+                System.out.println();
             }
 
         } catch (Exception e) {
