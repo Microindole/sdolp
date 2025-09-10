@@ -43,9 +43,7 @@ public class ExecutionEngine {
     }
 
     private TupleIterator buildExecutorTree(PlanNode plan, Transaction txn) throws IOException, InterruptedException {
-        if (plan instanceof CreateTablePlanNode createTablePlan) {
-            return new CreateTableExecutor(createTablePlan, catalog);
-        }
+        // --- DML and Scan Executors ---
         if (plan instanceof InsertPlanNode insertPlan) {
             TableHeap tableHeap = new TableHeap(bufferPoolManager, insertPlan.getTableInfo(), logManager, lockManager);
             return new InsertExecutor(insertPlan, tableHeap, txn);
@@ -54,13 +52,23 @@ public class ExecutionEngine {
             TableHeap tableHeap = new TableHeap(bufferPoolManager, seqScanPlan.getTableInfo(), logManager, lockManager);
             return new SeqScanExecutor(tableHeap, txn);
         }
+        if (plan instanceof DeletePlanNode deletePlan) {
+            TupleIterator childPlan = buildExecutorTree(deletePlan.getChild(), txn);
+            TableHeap tableHeap = new TableHeap(bufferPoolManager, deletePlan.getTableInfo(), logManager, lockManager);
+            return new DeleteExecutor(childPlan, tableHeap, txn);
+        }
+        if (plan instanceof UpdatePlanNode updatePlan) {
+            TupleIterator childPlan = buildExecutorTree(updatePlan.getChild(), txn);
+            TableHeap tableHeap = new TableHeap(bufferPoolManager, updatePlan.getTableInfo(), logManager, lockManager);
+            return new UpdateExecutor(childPlan, tableHeap, updatePlan.getTableInfo().getSchema(), updatePlan.getSetClauses(), txn);
+        }
 
+        // --- Query Clause Executors ---
         if (plan instanceof FilterPlanNode filterPlan) {
             TupleIterator childExecutor = buildExecutorTree(filterPlan.getChild(), txn);
             AbstractPredicate predicate = createPredicateFromAst(filterPlan.getPredicate(), filterPlan.getChild().getOutputSchema());
             return new FilterExecutor(childExecutor, predicate);
         }
-
         if (plan instanceof ProjectPlanNode projectPlan) {
             TupleIterator childExecutor = buildExecutorTree(projectPlan.getChild(), txn);
             List<Integer> columnIndexes = new ArrayList<>();
@@ -75,41 +83,31 @@ public class ExecutionEngine {
             }
             return new ProjectExecutor(childExecutor, columnIndexes);
         }
-
-        // --- 修正点 3 ---
-        // 将 plan 转换为 DeletePlanNode 类型的变量 deletePlan
-        if (plan instanceof DeletePlanNode deletePlan) {
-            TupleIterator childPlan = buildExecutorTree(deletePlan.getChild(), txn);
-            TableHeap tableHeap = new TableHeap(bufferPoolManager, deletePlan.getTableInfo(), logManager, lockManager);
-            return new DeleteExecutor(childPlan, tableHeap, txn);
-        }
-
-        // --- 修正点 4 ---
-        // 将 plan 转换为 UpdatePlanNode 类型的变量 updatePlan
-        if (plan instanceof UpdatePlanNode updatePlan) {
-            TupleIterator childPlan = buildExecutorTree(updatePlan.getChild(), txn);
-            TableHeap tableHeap = new TableHeap(bufferPoolManager, updatePlan.getTableInfo(), logManager, lockManager);
-            return new UpdateExecutor(childPlan, tableHeap, updatePlan.getTableInfo().getSchema(), updatePlan.getSetClauses(), txn);
-        }
         if (plan instanceof SortPlanNode sortPlan) {
-            // 错误修正：在递归调用时，必须传递 txn 对象
             TupleIterator childExecutor = buildExecutorTree(sortPlan.getChild(), txn);
             return new SortExecutor(childExecutor, sortPlan);
         }
         if (plan instanceof LimitPlanNode limitPlan) {
-            // 错误修正：在递归调用时，必须传递 txn 对象
             TupleIterator childExecutor = buildExecutorTree(limitPlan.getChild(), txn);
             return new LimitExecutor(childExecutor, limitPlan.getLimit());
         }
+
+        // --- DDL Executors ---
+        if (plan instanceof CreateTablePlanNode createTablePlan) {
+            // *** 核心修复点 1：为 DDL 执行器传入 txn 和 logManager ***
+            return new CreateTableExecutor(createTablePlan, catalog, txn, logManager);
+        }
         if (plan instanceof DropTablePlanNode dropPlan) {
-            return new DropTableExecutor(dropPlan, catalog);
+            // *** 核心修复点 2：为 DDL 执行器传入 txn 和 logManager ***
+            return new DropTableExecutor(dropPlan, catalog, txn, logManager);
         }
         if (plan instanceof AlterTablePlanNode alterPlan) {
-            return new AlterTableExecutor(alterPlan, catalog);
+            // *** 核心修复点 3：为 DDL 执行器传入 txn 和 logManager ***
+            return new AlterTableExecutor(alterPlan, catalog, txn, logManager);
         }
+
         throw new UnsupportedOperationException("Unsupported plan node: " + plan.getClass().getSimpleName());
     }
-
     private AbstractPredicate createPredicateFromAst(ExpressionNode expression, Schema schema) {
         if (expression instanceof BinaryExpressionNode node) {
             String operatorName = node.operator().type().name();

@@ -123,22 +123,22 @@ public class TableHeap implements TupleIterator {
         try {
             Page targetPage = findFreePageForInsert(tuple, txn);
             if (targetPage == null) return false;
-                RID rid = new RID(targetPage.getPageId().getPageNum(), targetPage.getNumTuples());
-                tuple.setRid(rid);
+            RID rid = new RID(targetPage.getPageId().getPageNum(), targetPage.getNumTuples());
+            tuple.setRid(rid);
 
-                LogRecord logRecord = new LogRecord(txn.getTransactionId(), txn.getPrevLSN(), LogRecord.LogType.INSERT, rid, tuple);
-                long lsn = logManager.appendLogRecord(logRecord);
-                txn.setPrevLSN(lsn);
+            LogRecord logRecord = new LogRecord(txn.getTransactionId(), txn.getPrevLSN(), LogRecord.LogType.INSERT, rid, tuple);
+            long lsn = logManager.appendLogRecord(logRecord);
+            txn.setPrevLSN(lsn);
 
-                boolean success = targetPage.insertTuple(tuple);
-                if (success) {
-                    bufferPoolManager.flushPage(targetPage.getPageId());
-                }
-                return success;
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IOException("Thread interrupted while acquiring lock", e);
+            boolean success = targetPage.insertTuple(tuple);
+            if (success) {
+                bufferPoolManager.flushPage(targetPage.getPageId());
             }
+            return success;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Thread interrupted while acquiring lock", e);
+        }
     }
 
     private Page findFreePageForInsert(Tuple tuple, Transaction txn) throws IOException, InterruptedException {

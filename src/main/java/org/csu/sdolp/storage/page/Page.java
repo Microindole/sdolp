@@ -131,8 +131,17 @@ public class Page {
         int offset = getTupleOffset(slotIndex);
         int length = getTupleLength(slotIndex);
 
-        if (length < 0) {
+        if (length == 0) { // 空元组或无效长度
             return null;
+        }
+        if (length < 0) { // 已被标记为删除的元组
+            return null;
+        }
+        // 检查offset和length是否会导致访问越界
+        if (offset < HEADER_SIZE || offset + length > PAGE_SIZE) {
+            System.err.println("WARNING: Corrupted tuple slot found in Page " + pageId.getPageNum() +
+                    " at slot " + slotIndex + ". Invalid offset=" + offset + ", length=" + length + ". Skipping.");
+            return null; // 将其视为无效元组，跳过
         }
 
         // 使用 System.arraycopy 直接从页面的底层数组复制字节。

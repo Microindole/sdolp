@@ -1,12 +1,10 @@
 package org.csu.sdolp.engine;
 
+import lombok.Getter;
 import org.csu.sdolp.catalog.Catalog;
-import org.csu.sdolp.common.exception.ParseException;
-import org.csu.sdolp.common.exception.SemanticException;
 import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.compiler.lexer.Lexer;
-import org.csu.sdolp.compiler.lexer.Token;
 import org.csu.sdolp.compiler.parser.Parser;
 import org.csu.sdolp.compiler.parser.ast.StatementNode;
 import org.csu.sdolp.compiler.planner.Planner;
@@ -30,10 +28,13 @@ import java.util.stream.Collectors;
 public class QueryProcessor {
 
     private final DiskManager diskManager;
+    @Getter
     private final BufferPoolManager bufferPoolManager;
     private final Catalog catalog;
     private final Planner planner;
     private final ExecutionEngine executionEngine;
+    // 在 QueryProcessor.java 文件末尾添加
+    @Getter
     private final LogManager logManager;
     private final LockManager lockManager;
     private final TransactionManager transactionManager;
@@ -211,4 +212,5 @@ public class QueryProcessor {
         }
         return sb.toString();
     }
+
 }

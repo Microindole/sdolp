@@ -2,6 +2,7 @@ package org.csu.sdolp.transaction.log;
 
 import lombok.Getter;
 import lombok.Setter;
+import org.csu.sdolp.common.model.Column;
 import org.csu.sdolp.common.model.RID;
 import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
@@ -12,7 +13,8 @@ import java.util.Arrays;
 
 public class LogRecord {
     public enum LogType {
-        INVALID, INSERT, DELETE, UPDATE, COMMIT, ABORT, BEGIN
+        INVALID, INSERT, DELETE, UPDATE, COMMIT, ABORT, BEGIN,
+        CREATE_TABLE, DROP_TABLE, ALTER_TABLE
     }
 
     // --- Header ---
@@ -38,6 +40,11 @@ public class LogRecord {
     private Tuple oldTuple;
     @Getter
     private Tuple newTuple;
+
+    // DDL 日志通常记录逻辑信息而非物理元组
+    private String tableName;
+    private Schema schema; // 用于 CREATE_TABLE
+    private Column newColumn; // 用于 ALTER_TABLE
 
     // 构造函数 for INSERT/DELETE
     public LogRecord(int transactionId, long prevLSN, LogType logType, RID rid, Tuple tuple) {
@@ -65,15 +72,36 @@ public class LogRecord {
         this.logType = logType;
     }
 
+    // 构造函数 for CREATE_TABLE
+    public LogRecord(int transactionId, long prevLSN, LogType logType, String tableName, Schema schema) {
+        this.transactionId = transactionId;
+        this.prevLSN = prevLSN;
+        this.logType = logType;
+        this.tableName = tableName;
+        this.schema = schema;
+    }
+
+    // 构造函数 for DROP_TABLE
+    public LogRecord(int transactionId, long prevLSN, LogType logType, String tableName) {
+        this.transactionId = transactionId;
+        this.prevLSN = prevLSN;
+        this.logType = logType;
+        this.tableName = tableName;
+    }
+
+    // 构造函数 for ALTER_TABLE
+    public LogRecord(int transactionId, long prevLSN, LogType logType, String tableName, Column newColumn) {
+        this.transactionId = transactionId;
+        this.prevLSN = prevLSN;
+        this.logType = logType;
+        this.tableName = tableName;
+        this.newColumn = newColumn;
+    }
+
     // 私有构造函数，用于反序列化
     private LogRecord() {}
 
 
-    /**
-     * 将 LogRecord 序列化为字节数组.
-     * 格式:
-     * [ record_size (4) | LSN (8) | txn_id (4) | prev_lsn (8) | log_type (4) | payload... ]
-     */
     public byte[] toBytes() {
         // 预计算 payload 大小
         int payloadSize = 0;

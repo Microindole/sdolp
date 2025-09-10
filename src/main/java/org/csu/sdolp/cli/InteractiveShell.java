@@ -1,9 +1,6 @@
 package org.csu.sdolp.cli;
 
-import org.csu.sdolp.engine.QueryProcessor;
-
 import java.io.BufferedReader;
-import java.io.IOException; // 1. 引入 IOException
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
