@@ -15,11 +15,11 @@ public class Server {
         // 1. 在服务器启动时，创建唯一的数据库引擎实例
         final QueryProcessor queryProcessor = new QueryProcessor("minidb.data");
 
-        // 【核心修改】在启动监听前，执行恢复
-        // 需要从 QueryProcessor 获取底层的管理器实例
         RecoveryManager recoveryManager = new RecoveryManager(
                 queryProcessor.getLogManager(),
-                queryProcessor.getBufferPoolManager()
+                queryProcessor.getBufferPoolManager(),
+                queryProcessor.getCatalog(),
+                queryProcessor.getLockManager()
         );
         recoveryManager.recover(); // 执行恢复！
 

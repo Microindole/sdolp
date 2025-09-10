@@ -30,12 +30,14 @@ public class QueryProcessor {
     private final DiskManager diskManager;
     @Getter
     private final BufferPoolManager bufferPoolManager;
+    @Getter
     private final Catalog catalog;
     private final Planner planner;
     private final ExecutionEngine executionEngine;
     // 在 QueryProcessor.java 文件末尾添加
     @Getter
     private final LogManager logManager;
+    @Getter
     private final LockManager lockManager;
     private final TransactionManager transactionManager;
 
@@ -74,6 +76,14 @@ public class QueryProcessor {
     public String executeAndGetResult(String sql) {
         Transaction txn = null; // 提前声明
         try {
+
+            // === 测试代码 ===
+            if (sql.trim().equalsIgnoreCase("CRASH_NOW;")) {
+                System.out.println("[DEBUG] Received CRASH_NOW command. Simulating unexpected shutdown...");
+                System.exit(1); // 强行退出Java进程，模拟断电
+            }
+            // === === === ===
+
             if (sql.trim().equalsIgnoreCase("FLUSH_BUFFER;")) {
                 bufferPoolManager.clear();
                 return "Buffer pool cleared.";

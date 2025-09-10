@@ -7,39 +7,36 @@ import org.csu.sdolp.common.model.RID;
 import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 
-import java.io.IOException;
+import java.io.*;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 
+@Getter
 public class LogRecord {
     public enum LogType {
         INVALID, INSERT, DELETE, UPDATE, COMMIT, ABORT, BEGIN,
-        CREATE_TABLE, DROP_TABLE, ALTER_TABLE
+        CREATE_TABLE, DROP_TABLE, ALTER_TABLE,
+        CLR
     }
 
     // --- Header ---
     private int recordSize = 0; // 整个记录的大小
     @Setter
-    @Getter
     private long lsn = -1;      // 日志序列号
-    @Getter
     private int transactionId;
-    @Getter
     private long prevLSN = -1;  // 该事务的上一条日志的 LSN
-    @Getter
     private LogType logType;
 
     // --- Payload for INSERT/DELETE ---
-    @Getter
     private RID rid;
-    @Getter
     private Tuple tuple; // INSERT: new tuple, DELETE: old tuple
 
     // --- Payload for UPDATE ---
-    @Getter
     private Tuple oldTuple;
-    @Getter
     private Tuple newTuple;
+
+    // --- Payload for CLR ---
+    private long undoNextLSN;
 
     // DDL 日志通常记录逻辑信息而非物理元组
     private String tableName;
@@ -98,96 +95,123 @@ public class LogRecord {
         this.newColumn = newColumn;
     }
 
+    // 构造函数 for CLR (补偿日志)
+    public LogRecord(int transactionId, long prevLSN, LogType logType, long undoNextLSN) {
+        this.transactionId = transactionId;
+        this.prevLSN = prevLSN;
+        this.logType = logType;
+        this.undoNextLSN = undoNextLSN;
+    }
+
     // 私有构造函数，用于反序列化
     private LogRecord() {}
 
 
     public byte[] toBytes() {
-        // 预计算 payload 大小
-        int payloadSize = 0;
-        byte[] tupleBytes = null;
-        byte[] oldTupleBytes = null;
-        byte[] newTupleBytes = null;
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        DataOutputStream dos = new DataOutputStream(baos);
+        try {
+            // 写入Header (除了总长度)
+            dos.writeLong(lsn);
+            dos.writeInt(transactionId);
+            dos.writeLong(prevLSN);
+            dos.writeInt(logType.ordinal());
 
-        if (logType == LogType.INSERT || logType == LogType.DELETE) {
-            tupleBytes = tuple.toBytes();
-            payloadSize = 8 + 4 + tupleBytes.length; // RID(8) + tuple_len(4) + tuple_data
-        } else if (logType == LogType.UPDATE) {
-            oldTupleBytes = oldTuple.toBytes();
-            newTupleBytes = newTuple.toBytes();
-            payloadSize = 8 + 4 + oldTupleBytes.length + 4 + newTupleBytes.length; // RID + old_len + old_data + new_len + new_data
+            // 根据类型写入Payload
+            switch (logType) {
+                case INSERT, DELETE -> {
+                    dos.writeInt(rid.pageNum());
+                    dos.writeInt(rid.slotIndex());
+                    byte[] tupleBytes = tuple.toBytes();
+                    dos.writeInt(tupleBytes.length);
+                    dos.write(tupleBytes);
+                }
+                case UPDATE -> {
+                    dos.writeInt(rid.pageNum());
+                    dos.writeInt(rid.slotIndex());
+                    byte[] oldTupleBytes = oldTuple.toBytes();
+                    dos.writeInt(oldTupleBytes.length);
+                    dos.write(oldTupleBytes);
+                    byte[] newTupleBytes = newTuple.toBytes();
+                    dos.writeInt(newTupleBytes.length);
+                    dos.write(newTupleBytes);
+                }
+                case CREATE_TABLE -> {
+                    dos.writeUTF(tableName);
+                    schema.write(dos);
+                }
+                case DROP_TABLE -> dos.writeUTF(tableName);
+                case ALTER_TABLE -> {
+                    dos.writeUTF(tableName);
+                    newColumn.write(dos);
+                }
+                case CLR -> dos.writeLong(undoNextLSN);
+            }
+            dos.close();
+
+            byte[] recordData = baos.toByteArray();
+            ByteBuffer buffer = ByteBuffer.allocate(4 + recordData.length);
+            buffer.putInt(4 + recordData.length); // 写入记录总长度
+            buffer.put(recordData);
+            return buffer.array();
+        } catch (IOException e) {
+            throw new RuntimeException("LogRecord serialization failed", e);
         }
-
-        recordSize = 28 + payloadSize; // 28 is the header size
-        ByteBuffer buffer = ByteBuffer.allocate(recordSize);
-
-        // --- 写入 Header ---
-        buffer.putInt(recordSize);
-        buffer.putLong(lsn);
-        buffer.putInt(transactionId);
-        buffer.putLong(prevLSN);
-        buffer.putInt(logType.ordinal());
-
-        // --- 写入 Payload ---
-        if (logType == LogType.INSERT || logType == LogType.DELETE) {
-            buffer.putInt(rid.pageNum());
-            buffer.putInt(rid.slotIndex());
-            buffer.putInt(tupleBytes.length);
-            buffer.put(tupleBytes);
-        } else if (logType == LogType.UPDATE) {
-            buffer.putInt(rid.pageNum());
-            buffer.putInt(rid.slotIndex());
-            buffer.putInt(oldTupleBytes.length);
-            buffer.put(oldTupleBytes);
-            buffer.putInt(newTupleBytes.length);
-            buffer.put(newTupleBytes);
-        }
-
-        return buffer.array();
     }
 
-    /**
-     * 从 ByteBuffer 反序列化 LogRecord.
-     * @param buffer 包含日志数据的 ByteBuffer
-     * @return 反序列化后的 LogRecord 对象
-     */
-    public static LogRecord fromBytes(ByteBuffer buffer, Schema schema) {
+    public static LogRecord fromBytes(ByteBuffer buffer, Schema tableSchema) {
+        int recordSize = buffer.getInt();
+        byte[] recordData = new byte[recordSize - 4];
+        buffer.get(recordData);
+
+        ByteArrayInputStream bais = new ByteArrayInputStream(recordData);
+        DataInputStream dis = new DataInputStream(bais);
         LogRecord record = new LogRecord();
-        record.recordSize = buffer.getInt();
-        record.lsn = buffer.getLong();
-        record.transactionId = buffer.getInt();
-        record.prevLSN = buffer.getLong();
-        record.logType = LogType.values()[buffer.getInt()];
 
-        if (record.logType == LogType.INSERT || record.logType == LogType.DELETE) {
-            int pageNum = buffer.getInt();
-            int slotIndex = buffer.getInt();
-            record.rid = new RID(pageNum, slotIndex);
-            int tupleLen = buffer.getInt();
-            byte[] tupleBytes = new byte[tupleLen];
-            buffer.get(tupleBytes);
-            // 注意：这里的反序列化需要 Schema，在简化场景下，我们先假设能拿到
-            if (schema != null) {
-                record.tuple = Tuple.fromBytes(tupleBytes, schema);
+        try {
+            record.lsn = dis.readLong();
+            record.transactionId = dis.readInt();
+            record.prevLSN = dis.readLong();
+            record.logType = LogType.values()[dis.readInt()];
+
+            switch (record.logType) {
+                case INSERT, DELETE -> {
+                    record.rid = new RID(dis.readInt(), dis.readInt());
+                    int tupleLen = dis.readInt();
+                    byte[] tupleBytes = new byte[tupleLen];
+                    dis.readFully(tupleBytes);
+                    if (tableSchema != null) {
+                        record.tuple = Tuple.fromBytes(tupleBytes, tableSchema);
+                    }
+                }
+                case UPDATE -> {
+                    record.rid = new RID(dis.readInt(), dis.readInt());
+                    int oldTupleLen = dis.readInt();
+                    byte[] oldTupleBytes = new byte[oldTupleLen];
+                    dis.readFully(oldTupleBytes);
+                    int newTupleLen = dis.readInt();
+                    byte[] newTupleBytes = new byte[newTupleLen];
+                    dis.readFully(newTupleBytes);
+                    if (tableSchema != null) {
+                        record.oldTuple = Tuple.fromBytes(oldTupleBytes, tableSchema);
+                        record.newTuple = Tuple.fromBytes(newTupleBytes, tableSchema);
+                    }
+                }
+                case CREATE_TABLE -> {
+                    record.tableName = dis.readUTF();
+                    record.schema = Schema.read(dis);
+                }
+                case DROP_TABLE -> record.tableName = dis.readUTF();
+                case ALTER_TABLE -> {
+                    record.tableName = dis.readUTF();
+                    record.newColumn = Column.read(dis);
+                }
+                case CLR -> record.undoNextLSN = dis.readLong();
             }
-        } else if (record.logType == LogType.UPDATE) {
-            int pageNum = buffer.getInt();
-            int slotIndex = buffer.getInt();
-            record.rid = new RID(pageNum, slotIndex);
-
-            if (schema != null) {
-                int oldTupleLen = buffer.getInt();
-                byte[] oldTupleBytes = new byte[oldTupleLen];
-                buffer.get(oldTupleBytes);
-                record.oldTuple = Tuple.fromBytes(oldTupleBytes, schema);
-
-                int newTupleLen = buffer.getInt();
-                byte[] newTupleBytes = new byte[newTupleLen];
-                buffer.get(newTupleBytes);
-                record.newTuple = Tuple.fromBytes(newTupleBytes, schema);
-            }
+            dis.close();
+        } catch (IOException e) {
+            throw new RuntimeException("LogRecord deserialization failed", e);
         }
         return record;
     }
-
 }

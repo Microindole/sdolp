@@ -1,5 +1,9 @@
 package org.csu.sdolp.common.model;
 
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -29,6 +33,19 @@ public class Schema {
                 .collect(Collectors.toList());
     }
 
+    public void write(DataOutputStream out) throws IOException {
+        out.writeInt(columns.size());
+        for (Column col : columns) {
+            col.write(out);
+        }
+    }
 
-
+    public static Schema read(DataInputStream in) throws IOException {
+        int numColumns = in.readInt();
+        List<Column> columns = new ArrayList<>(numColumns);
+        for (int i = 0; i < numColumns; i++) {
+            columns.add(Column.read(in));
+        }
+        return new Schema(columns);
+    }
 }

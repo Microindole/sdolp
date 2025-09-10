@@ -286,4 +286,25 @@ public class Catalog {
         }
         return null;
     }
+    public TableInfo getTableByTuple(Tuple tuple) {
+        if (tuple == null) return null;
+        // 这是一个简化的、低效的查找，仅用于恢复
+        for (TableInfo tableInfo : tables.values()) {
+            Schema schema = tableInfo.getSchema();
+            if (schema.getColumns().size() == tuple.getValues().size()) {
+                // 【新增】同时比较每一列的数据类型
+                boolean typesMatch = true;
+                for (int i = 0; i < schema.getColumns().size(); i++) {
+                    if (schema.getColumns().get(i).getType() != tuple.getValues().get(i).getType()) {
+                        typesMatch = false;
+                        break;
+                    }
+                }
+                if (typesMatch) {
+                    return tableInfo; // 只有列数和所有类型都匹配，才认为是同一张表
+                }
+            }
+        }
+        return null;
+    }
 }

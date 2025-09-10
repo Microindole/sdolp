@@ -4,6 +4,8 @@ import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class LogManager {
@@ -54,5 +56,51 @@ public class LogManager {
         if (logFile != null) {
             logFile.close();
         }
+    }
+
+    /**
+     * 从日志文件中读取并反序列化所有日志记录.
+     * @return LogRecord列表
+     */
+    public List<LogRecord> readAllLogRecords() throws IOException {
+        List<LogRecord> records = new ArrayList<>();
+        long currentPosition = 0;
+        long fileLength = logFile.length();
+
+        while (currentPosition < fileLength) {
+            logFile.seek(currentPosition);
+            int recordSize = logFile.readInt();
+            if (recordSize <= 0) break;
+
+            byte[] recordBytes = new byte[recordSize];
+            logFile.seek(currentPosition);
+            int bytesRead = logFile.read(recordBytes);
+            if (bytesRead != recordSize) break;
+
+            ByteBuffer buffer = ByteBuffer.wrap(recordBytes);
+            // 注意：恢复时我们不知道是哪个表的Schema，所以传null
+            records.add(LogRecord.fromBytes(buffer, null));
+            currentPosition += recordSize;
+        }
+        return records;
+    }
+
+    /**
+     * 根据LSN（即文件偏移量）读取单条日志记录。
+     * @param lsn 日志序列号
+     * @return 读取到的LogRecord
+     */
+    public LogRecord readLogRecord(long lsn) throws IOException {
+        logFile.seek(lsn);
+        int recordSize = logFile.readInt();
+        if (recordSize <= 0) return null;
+
+        byte[] recordBytes = new byte[recordSize];
+        logFile.seek(lsn);
+        int bytesRead = logFile.read(recordBytes);
+        if (bytesRead != recordSize) return null;
+
+        ByteBuffer buffer = ByteBuffer.wrap(recordBytes);
+        return LogRecord.fromBytes(buffer, null);
     }
 }

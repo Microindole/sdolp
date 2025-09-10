@@ -32,4 +32,10 @@ public class Transaction {
         this.lockedPageIds = new HashSet<>();
     }
 
+    public Transaction(int transactionId) {
+        this.transactionId = transactionId;
+        this.state = State.ACTIVE;
+        this.lockedPageIds = new HashSet<>();
+    }
+
 }

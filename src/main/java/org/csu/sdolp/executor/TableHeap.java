@@ -111,24 +111,22 @@ public class TableHeap implements TupleIterator {
         }
     }
 
-    /**
-     * 向表中插入一条元组，并遵循WAL协议。
-     * @param tuple 要插入的元组
-     * @param txn   当前事务
-     * @return 插入成功返回 true
-     */
     public boolean insertTuple(Tuple tuple, Transaction txn) throws IOException {
-
-
+        return insertTuple(tuple, txn, true);
+    }
+    // 核心修改
+    public boolean insertTuple(Tuple tuple, Transaction txn, boolean writeLog) throws IOException {
         try {
             Page targetPage = findFreePageForInsert(tuple, txn);
             if (targetPage == null) return false;
             RID rid = new RID(targetPage.getPageId().getPageNum(), targetPage.getNumTuples());
             tuple.setRid(rid);
 
-            LogRecord logRecord = new LogRecord(txn.getTransactionId(), txn.getPrevLSN(), LogRecord.LogType.INSERT, rid, tuple);
-            long lsn = logManager.appendLogRecord(logRecord);
-            txn.setPrevLSN(lsn);
+            if (writeLog) { // 【新增】只在非恢复模式下写日志
+                LogRecord logRecord = new LogRecord(txn.getTransactionId(), txn.getPrevLSN(), LogRecord.LogType.INSERT, rid, tuple);
+                long lsn = logManager.appendLogRecord(logRecord);
+                txn.setPrevLSN(lsn);
+            }
 
             boolean success = targetPage.insertTuple(tuple);
             if (success) {
@@ -140,6 +138,9 @@ public class TableHeap implements TupleIterator {
             throw new IOException("Thread interrupted while acquiring lock", e);
         }
     }
+
+//    Thread.currentThread().interrupt();
+//            throw new IOException("Thread interrupted while acquiring lock", e);
 
     private Page findFreePageForInsert(Tuple tuple, Transaction txn) throws IOException, InterruptedException {
         byte[] tupleBytes = tuple.toBytes();
