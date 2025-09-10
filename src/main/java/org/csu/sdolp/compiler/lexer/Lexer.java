@@ -36,6 +36,11 @@ public class Lexer {
         keywords.put("set", TokenType.SET);
         keywords.put("int", TokenType.INT);
         keywords.put("varchar", TokenType.VARCHAR);
+        keywords.put("order", TokenType.ORDER);
+        keywords.put("by", TokenType.BY);
+        keywords.put("asc", TokenType.ASC);
+        keywords.put("desc", TokenType.DESC);
+        keywords.put("limit", TokenType.LIMIT);
     }
 
     public Lexer(String input) {
@@ -84,7 +89,7 @@ public class Lexer {
             return readString();
         }
 
-        // ====== 修改：扩展运算符和分隔符的识别 ======
+
         // 识别运算符和分隔符
         switch (currentChar) {
             case '=':

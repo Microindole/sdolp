@@ -22,6 +22,14 @@ public enum TokenType {
     INT,        // "INT" 数据类型
     VARCHAR,    // "VARCHAR" 数据类型
 
+    // ====== 新增关键字 (Phase 1) ======
+    ORDER,      // "ORDER"
+    BY,         // "BY"
+    ASC,        // "ASC"
+    DESC,       // "DESC"
+    LIMIT,      // "LIMIT"
+    // ===================================
+
     // ---- 标识符 (Identifier) ----
     IDENTIFIER, // 表名、列名等
 

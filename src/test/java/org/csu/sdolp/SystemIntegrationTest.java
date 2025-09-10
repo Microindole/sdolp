@@ -68,7 +68,24 @@ public class SystemIntegrationTest {
         System.out.println("\n--- Products after delete ---");
         queryProcessor.execute("SELECT * FROM products;");
     }
+    @Test
+    void testOrderByAndLimitFlow() {
+        System.out.println("\n--- Test: Order By and Limit ---");
+        queryProcessor.execute("CREATE TABLE employees (id INT, name VARCHAR, age INT);");
+        queryProcessor.execute("INSERT INTO employees (id, name, age) VALUES (1, 'Eve', 22);");
+        queryProcessor.execute("INSERT INTO employees (id, name, age) VALUES (2, 'Frank', 35);");
+        queryProcessor.execute("INSERT INTO employees (id, name, age) VALUES (3, 'Grace', 28);");
+        queryProcessor.execute("INSERT INTO employees (id, name, age) VALUES (4, 'Dave', 22);");
 
+        System.out.println("\n--- Selecting all employees, ordered by age DESC ---");
+        System.out.println("--- Expected order: Frank(35), Grace(28), Eve(22), Dave(22) ---");
+        queryProcessor.execute("SELECT * FROM employees ORDER BY age DESC;");
+
+        System.out.println("\n--- Selecting all employees, ordered by age ASC, limited to 2 ---");
+        System.out.println("--- Expected order: Eve(22), Dave(22) (or vice versa), then Grace(28) ---");
+        System.out.println("--- Expected result: First two employees (age 22 and 28) ---");
+        queryProcessor.execute("SELECT * FROM employees ORDER BY age ASC LIMIT 2;");
+    }
     @Test
     void testDataPersistence() throws IOException {
         System.out.println("--- Test: Data Persistence ---");

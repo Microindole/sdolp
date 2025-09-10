@@ -104,6 +104,13 @@ public class SemanticAnalyzer {
         if (node.whereClause() != null) {
             analyzeExpression(node.whereClause(), tableInfo);
         }
+        // 检查 ORDER BY 子句
+        if (node.orderByClause() != null) {
+            String colName = node.orderByClause().column().name();
+            checkColumnExists(tableInfo, colName);
+        }
+        // LIMIT 子句的值在语法分析时已确认为整数，无需额外语义检查。
+        // ============================
     }
 
     private void analyzeDelete(DeleteStatementNode node) {

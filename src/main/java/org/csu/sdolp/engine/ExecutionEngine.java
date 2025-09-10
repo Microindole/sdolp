@@ -89,7 +89,16 @@ public class ExecutionEngine {
             TableHeap tableHeap = new TableHeap(bufferPoolManager, updatePlan.getTableInfo(), logManager);
             return new UpdateExecutor(childPlan, tableHeap, updatePlan.getTableInfo().getSchema(), updatePlan.getSetClauses(), txn);
         }
-
+        if (plan instanceof SortPlanNode sortPlan) {
+            // 错误修正：在递归调用时，必须传递 txn 对象
+            TupleIterator childExecutor = buildExecutorTree(sortPlan.getChild(), txn);
+            return new SortExecutor(childExecutor, sortPlan);
+        }
+        if (plan instanceof LimitPlanNode limitPlan) {
+            // 错误修正：在递归调用时，必须传递 txn 对象
+            TupleIterator childExecutor = buildExecutorTree(limitPlan.getChild(), txn);
+            return new LimitExecutor(childExecutor, limitPlan.getLimit());
+        }
         throw new UnsupportedOperationException("Unsupported plan node: " + plan.getClass().getSimpleName());
     }
 

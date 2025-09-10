@@ -39,9 +39,9 @@ public class Planner {
             return createSelectPlan(stmt);
         }
         if (ast instanceof DeleteStatementNode) {
-            return createDeletePlan((DeleteStatementNode) ast); // 修改
+            return createDeletePlan((DeleteStatementNode) ast);
         }
-        if (ast instanceof UpdateStatementNode) { // 新增
+        if (ast instanceof UpdateStatementNode) {
             return createUpdatePlan((UpdateStatementNode) ast);
         }
         throw new UnsupportedOperationException("Unsupported statement type for planning: " + ast.getClass().getSimpleName());
@@ -104,7 +104,15 @@ public class Planner {
             Schema projectedSchema = new Schema(projectedColumns);
             plan = new ProjectPlanNode(plan, projectedSchema);
         }
+        // 4. ORDER BY 子句 -> Sort
+        if (ast.orderByClause() != null) {
+            plan = new SortPlanNode(plan, ast.orderByClause());
+        }
 
+        // 5. LIMIT 子句 -> Limit
+        if (ast.limitClause() != null) {
+            plan = new LimitPlanNode(plan, ast.limitClause().limit());
+        }
         return plan;
     }
 

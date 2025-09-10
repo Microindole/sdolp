@@ -32,7 +32,7 @@ public class Parser {
         }
         StatementNode statement = parseStatement();
 
-        // --- 新代码 ---
+
         consume(TokenType.SEMICOLON, "';' at the end of statement");
 
 
@@ -141,8 +141,19 @@ public class Parser {
         if (match(TokenType.WHERE)) {
             whereClause = parseExpression();
         }
+        // ====== 新增 (Phase 1) ======
+        OrderByClauseNode orderByClause = null;
+        if (match(TokenType.ORDER)) {
+            orderByClause = parseOrderByClause();
+        }
 
-        return new SelectStatementNode(selectList, fromTable, whereClause, isSelectAll);
+        LimitClauseNode limitClause = null;
+        if (match(TokenType.LIMIT)) {
+            limitClause = parseLimitClause();
+        }
+        // ============================
+
+        return new SelectStatementNode(selectList, fromTable, whereClause, isSelectAll, orderByClause, limitClause);
     }
     // ====== 新增：INSERT 语句解析方法 ======
     private InsertStatementNode parseInsertStatement() {
@@ -174,7 +185,7 @@ public class Parser {
     }
     // ======================================
 
-    // ====== 新增：DELETE 语句解析方法 ======
+
     private DeleteStatementNode parseDeleteStatement() {
         consume(TokenType.FROM, "'FROM' keyword");
         Token tableNameToken = consume(TokenType.IDENTIFIER, "table name");
@@ -189,7 +200,7 @@ public class Parser {
     }
     // ======================================
 
-    // 新增方法：解析 UPDATE 语句
+
     private UpdateStatementNode parseUpdateStatement() {
         Token tableNameToken = consume(TokenType.IDENTIFIER, "table name after UPDATE");
         IdentifierNode tableName = new IdentifierNode(tableNameToken.lexeme());
@@ -211,6 +222,29 @@ public class Parser {
         }
 
         return new UpdateStatementNode(tableName, setClauses, whereClause);
+    }
+    // ====== 新增解析方法 (Phase 1) ======
+    private OrderByClauseNode parseOrderByClause() {
+        consume(TokenType.BY, "'BY' after 'ORDER'");
+        Token columnToken = consume(TokenType.IDENTIFIER, "column name for ordering");
+        IdentifierNode column = new IdentifierNode(columnToken.lexeme());
+
+        boolean isAscending = true; // 默认为升序
+        if (match(TokenType.ASC)) {
+            isAscending = true;
+        } else if (match(TokenType.DESC)) {
+            isAscending = false;
+        }
+        return new OrderByClauseNode(column, isAscending);
+    }
+    private LimitClauseNode parseLimitClause() {
+        Token limitToken = consume(TokenType.INTEGER_CONST, "integer value for LIMIT");
+        try {
+            int limit = Integer.parseInt(limitToken.lexeme());
+            return new LimitClauseNode(limit);
+        } catch (NumberFormatException e) {
+            throw new ParseException("Invalid number for LIMIT: " + limitToken.lexeme());
+        }
     }
     // ====== 新增：表达式解析相关方法 ======
     private ExpressionNode parseExpression() {
