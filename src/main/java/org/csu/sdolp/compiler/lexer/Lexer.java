@@ -43,6 +43,10 @@ public class Lexer {
         keywords.put("limit", TokenType.LIMIT);
         keywords.put("and", TokenType.AND);
         keywords.put("or", TokenType.OR);
+        keywords.put("drop", TokenType.DROP);
+        keywords.put("alter", TokenType.ALTER);
+        keywords.put("add", TokenType.ADD);
+        keywords.put("column", TokenType.COLUMN);
     }
 
     public Lexer(String input) {

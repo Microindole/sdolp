@@ -44,6 +44,12 @@ public class Planner {
         if (ast instanceof UpdateStatementNode) {
             return createUpdatePlan((UpdateStatementNode) ast);
         }
+        if (ast instanceof DropTableStatementNode stmt) {
+            return createDropTablePlan(stmt);
+        }
+        if (ast instanceof AlterTableStatementNode stmt) {
+            return createAlterTablePlan(stmt);
+        }
         throw new UnsupportedOperationException("Unsupported statement type for planning: " + ast.getClass().getSimpleName());
     }
 
@@ -136,5 +142,17 @@ public class Planner {
         }
         // 2. 用 UpdatePlanNode 包装子计划
         return new UpdatePlanNode(childPlan, tableInfo, ast.setClauses());
+    }
+    private PlanNode createDropTablePlan(DropTableStatementNode ast) {
+        return new DropTablePlanNode(ast.tableName().name());
+    }
+
+    private PlanNode createAlterTablePlan(AlterTableStatementNode ast) {
+        ColumnDefinitionNode colDef = ast.newColumnDefinition();
+        Column newColumn = new Column(
+                colDef.columnName().name(),
+                DataType.valueOf(colDef.dataType().name().toUpperCase())
+        );
+        return new AlterTablePlanNode(ast.tableName().name(), newColumn);
     }
 }

@@ -190,6 +190,85 @@ public class Catalog {
 
         return tableInfo;
     }
+    /**
+     * 从目录中删除一个表
+     * @param tableName 要删除的表名
+     */
+    public void dropTable(String tableName) throws IOException {
+        Integer tableId = tableIds.get(tableName);
+        if (tableId == null) {
+            throw new IllegalArgumentException("Table " + tableName + " does not exist.");
+        }
+
+        // 1. 从内存缓存中移除
+        tables.remove(tableName);
+        tableIds.remove(tableName);
+
+        // 2. 从 _catalog_tables 元数据页中删除表的条目
+        deleteTupleFromMetaDataPage(tablesTableFirstPageId, tablesTableSchema, 0, new Value(tableId));
+
+        // 3. 从 _catalog_columns 元数据页中删除该表的所有列条目
+        deleteTupleFromMetaDataPage(columnsTableFirstPageId, columnsTableSchema, 0, new Value(tableId));
+
+        // 注意：我们没有删除表的数据页，这在真实系统中需要一个复杂的空闲空间管理机制来回收。
+        // 在此简化模型中，我们仅删除元数据，数据页将变为不可访问的“孤儿页”。
+    }
+
+    /**
+     * 向现有表添加一个新列
+     * @param tableName 要修改的表名
+     * @param newColumn 新增的列
+     */
+    public void addColumn(String tableName, Column newColumn) throws IOException {
+        TableInfo tableInfo = getTable(tableName);
+        if (tableInfo == null) {
+            throw new IllegalArgumentException("Table " + tableName + " does not exist.");
+        }
+        int tableId = tableIds.get(tableName);
+
+        // 1. 更新内存中的 Schema
+        List<Column> updatedColumns = new ArrayList<>(tableInfo.getSchema().getColumns());
+        updatedColumns.add(newColumn);
+        Schema newSchema = new Schema(updatedColumns);
+
+        // 2. 将新列的元数据持久化到 _catalog_columns
+        Page columnsPage = bufferPoolManager.getPage(columnsTableFirstPageId);
+        Tuple columnMeta = new Tuple(Arrays.asList(
+                new Value(tableId),
+                new Value(newColumn.getName()),
+                new Value(newColumn.getType().toString()),
+                new Value(tableInfo.getSchema().getColumns().size()) // 新列的索引
+        ));
+        columnsPage.insertTuple(columnMeta);
+        bufferPoolManager.flushPage(columnsTableFirstPageId);
+
+        // 3. 更新内存缓存中的 TableInfo
+        TableInfo newTableInfo = new TableInfo(tableName, newSchema, tableInfo.getFirstPageId());
+        tables.put(tableName, newTableInfo);
+    }
+
+    /**
+     * 辅助方法：从元数据页中删除满足条件的元组
+     */
+    private void deleteTupleFromMetaDataPage(PageId pageId, Schema schema, int columnIndex, Value value) throws IOException {
+        Page page = bufferPoolManager.getPage(pageId);
+        List<Tuple> tuples = page.getAllTuples(schema);
+
+        // 找到所有需要删除的元组的槽位索引
+        List<Integer> slotsToDelete = new ArrayList<>();
+        for (int i = 0; i < tuples.size(); i++) {
+            Tuple t = tuples.get(i);
+            if (t != null && t.getValues().get(columnIndex).getValue().equals(value.getValue())) {
+                slotsToDelete.add(i);
+            }
+        }
+
+        // 标记删除
+        for (Integer slotIndex : slotsToDelete) {
+            page.markTupleAsDeleted(slotIndex);
+        }
+        bufferPoolManager.flushPage(pageId);
+    }
 
     public TableInfo getTable(String tableName) {
         return tables.get(tableName);

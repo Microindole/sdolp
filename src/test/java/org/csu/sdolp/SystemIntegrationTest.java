@@ -104,6 +104,38 @@ public class SystemIntegrationTest {
         queryProcessor.execute("SELECT name FROM students WHERE major = 'EE' OR age > 22;");
     }
     @Test
+    void testDdlFlow() {
+        System.out.println("\n--- Test: DDL Flow (ALTER, DROP) ---");
+
+        // 1. 创建一个初始表
+        queryProcessor.execute("CREATE TABLE to_be_modified (id INT, name VARCHAR);");
+        queryProcessor.execute("INSERT INTO to_be_modified (id, name) VALUES (1, 'initial');");
+
+        System.out.println("\n--- Table before ALTER ---");
+        queryProcessor.execute("SELECT * FROM to_be_modified;");
+
+        // 2. 使用 ALTER TABLE 添加新列
+        System.out.println("\n--- Altering table to add 'score' column ---");
+        queryProcessor.execute("ALTER TABLE to_be_modified ADD COLUMN score INT;");
+
+        // 3. 插入包含新列的数据
+        queryProcessor.execute("INSERT INTO to_be_modified (id, name, score) VALUES (2, 'added', 100);");
+
+        System.out.println("\n--- Table after ALTER and new INSERT ---");
+        // 注意：第一次插入的 'initial' 行，其 score 列应该是 null。我们的简化模型会如何表现？
+        // 在我们的 Tuple/Value 模型下，它会是 null object in value list.
+        // select * 应该能正常工作并显示三列
+        queryProcessor.execute("SELECT * FROM to_be_modified;");
+
+        // 4. 使用 DROP TABLE 删除表
+        System.out.println("\n--- Dropping table ---");
+        queryProcessor.execute("DROP TABLE to_be_modified;");
+
+        // 5. 验证表已被删除（预期会收到 "Table not found" 错误）
+        System.out.println("\n--- Verifying table is dropped (expecting an error) ---");
+        queryProcessor.execute("SELECT * FROM to_be_modified;");
+    }
+    @Test
     void testDataPersistence() throws IOException {
         System.out.println("--- Test: Data Persistence ---");
         queryProcessor.execute("CREATE TABLE persistent_table (id INT);");

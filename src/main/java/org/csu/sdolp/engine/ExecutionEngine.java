@@ -100,24 +100,15 @@ public class ExecutionEngine {
             TupleIterator childExecutor = buildExecutorTree(limitPlan.getChild(), txn);
             return new LimitExecutor(childExecutor, limitPlan.getLimit());
         }
+        if (plan instanceof DropTablePlanNode dropPlan) {
+            return new DropTableExecutor(dropPlan, catalog);
+        }
+        if (plan instanceof AlterTablePlanNode alterPlan) {
+            return new AlterTableExecutor(alterPlan, catalog);
+        }
         throw new UnsupportedOperationException("Unsupported plan node: " + plan.getClass().getSimpleName());
     }
 
-//    private AbstractPredicate createPredicateFromAst(ExpressionNode expression, Schema schema) {
-//        if (expression instanceof BinaryExpressionNode node) {
-//            if (!(node.left() instanceof IdentifierNode) || !(node.right() instanceof LiteralNode)) {
-//                throw new UnsupportedOperationException("WHERE clause only supports 'column_name op literal' format.");
-//            }
-//
-//            String columnName = ((IdentifierNode) node.left()).name();
-//            int columnIndex = getColumnIndex(schema, columnName);
-//            String operator = node.operator().type().name();
-//            Value literalValue = getLiteralValue((LiteralNode) node.right());
-//
-//            return new ComparisonPredicate(columnIndex, literalValue, operator);
-//        }
-//        throw new UnsupportedOperationException("Unsupported expression type in WHERE clause.");
-//    }
     private AbstractPredicate createPredicateFromAst(ExpressionNode expression, Schema schema) {
         if (expression instanceof BinaryExpressionNode node) {
             String operatorName = node.operator().type().name();

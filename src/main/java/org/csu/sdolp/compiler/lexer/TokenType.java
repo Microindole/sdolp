@@ -31,6 +31,12 @@ public enum TokenType {
     // ===================================
     AND,        // "AND"
     OR,         // "OR"
+
+    DROP,       // "DROP"
+    ALTER,      // "ALTER"
+    ADD,        // "ADD"
+    COLUMN,     // "COLUMN"
+
     // ---- 标识符 (Identifier) ----
     IDENTIFIER, // 表名、列名等
 

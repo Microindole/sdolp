@@ -34,6 +34,10 @@ public class UpdateExecutor implements TupleIterator {
         if (done) {
             return null;
         }
+        List<Tuple> tuplesToUpdate = new ArrayList<>();
+        while (child.hasNext()) {
+            tuplesToUpdate.add(child.next());
+        }
         int updatedCount = 0;
         while (child.hasNext()) {
             Tuple oldTuple = child.next();
