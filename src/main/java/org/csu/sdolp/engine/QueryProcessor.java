@@ -20,6 +20,8 @@ import org.csu.sdolp.transaction.TransactionManager;
 import org.csu.sdolp.transaction.log.LogManager;
 
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -46,7 +48,7 @@ public class QueryProcessor {
             this.lockManager = new LockManager();
             this.transactionManager = new TransactionManager(lockManager, logManager);
             // *** 修改点：将LogManager传入ExecutionEngine ***
-            this.executionEngine = new ExecutionEngine(bufferPoolManager, catalog, logManager);
+            this.executionEngine = new ExecutionEngine(bufferPoolManager, catalog, logManager, lockManager);
         } catch (IOException e) {
             throw new RuntimeException("Failed to initialize database engine", e);
         }
@@ -59,39 +61,43 @@ public class QueryProcessor {
         logManager.close();
     }
 
-    public void execute(String sql) {
+    /**
+     * 主执行方法，它会捕获所有异常并将其格式化为错误信息返回。
+     * 它将执行结果或错误信息作为字符串返回。
+     * @param sql 要执行的SQL语句
+     * @return 包含结果集或错误信息的字符串
+     */
+    public String executeAndGetResult(String sql) {
         Transaction txn = null; // 提前声明
         try {
+            if (sql.trim().equalsIgnoreCase("FLUSH_BUFFER;")) {
+                bufferPoolManager.clear();
+                return "Buffer pool cleared.";
+            }
             txn = transactionManager.begin();
-            System.out.println("Executing: " + sql);
+            System.out.println("Executing: " + sql + " in TxnID=" + txn.getTransactionId());
 
             Lexer lexer = new Lexer(sql);
-            List<Token> tokens = lexer.tokenize();
-            Parser parser = new Parser(tokens);
+            Parser parser = new Parser(lexer.tokenize());
             StatementNode ast = parser.parse();
             if (ast == null) {
                 transactionManager.abort(txn); // 如果是空语句，也中止事务
-                return;
+                return "Empty statement.";
             }
 
             SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(catalog);
             semanticAnalyzer.analyze(ast);
-            System.out.println("Semantic analysis passed.");
 
             PlanNode plan = planner.createPlan(ast);
-            System.out.println("Logical plan created.");
 
             // *** 修改点：将Transaction对象传入execute方法 ***
             TupleIterator executor = executionEngine.execute(plan, txn);
-            System.out.println("Execution plan executed.");
 
-            // 执行器可能为null（如CREATE），或者迭代完成后才算成功
-            if (executor != null) {
-                printResults(executor);
-            }
+
+            String result = formatResults(executor); // 调用新的格式化方法
 
             transactionManager.commit(txn);
-
+            return result;
         } catch (Exception e) {
             if (txn != null) {
                 try {
@@ -101,27 +107,43 @@ public class QueryProcessor {
                     System.err.println("Failed to abort transaction: " + ioException.getMessage());
                 }
             }
-            System.err.println("Error: " + e.getMessage());
-            if (!(e instanceof ParseException || e instanceof SemanticException)) {
-                e.printStackTrace();
-            }
+            // 将异常信息格式化后返回
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            e.printStackTrace(pw);
+            return "ERROR: " + e.getMessage(); // 返回简洁的错误信息
         }
     }
 
-    private void printResults(TupleIterator iterator) throws IOException {
+    public void execute(String sql) {
+        String result = executeAndGetResult(sql);
+        System.out.println(result);
+    }
+
+    /**
+     * 将执行器返回的元组迭代器格式化为字符串。
+     * @param iterator 元组迭代器
+     * @return 格式化后的结果字符串
+     */
+    private String formatResults(TupleIterator iterator) throws IOException {
+        if (iterator == null) {
+            return "Query executed successfully, no rows returned.";
+        }
         List<Tuple> results = new ArrayList<>();
         while (iterator.hasNext()) {
             results.add(iterator.next());
         }
 
         if (results.isEmpty()) {
-            System.out.println("Query finished, 0 rows affected or returned.");
-            return;
+            return "Query finished, 0 rows affected or returned.";
         }
 
+        StringBuilder sb = new StringBuilder();
         for (Tuple tuple : results) {
-            System.out.println(">> " + tuple);
+            sb.append(tuple.toString()).append("\n");
         }
-        System.out.println("Query finished, " + results.size() + " rows returned/affected.");
+        sb.append("Query finished, ").append(results.size()).append(" rows returned/affected.");
+
+        return sb.toString();
     }
 }

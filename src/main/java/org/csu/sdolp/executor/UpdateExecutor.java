@@ -5,6 +5,8 @@ import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.common.model.Value;
 import org.csu.sdolp.compiler.parser.ast.LiteralNode;
 import org.csu.sdolp.compiler.parser.ast.SetClauseNode;
+import org.csu.sdolp.storage.page.PageId;
+import org.csu.sdolp.transaction.LockManager;
 import org.csu.sdolp.transaction.Transaction;
 
 import java.io.IOException;
@@ -17,8 +19,11 @@ public class UpdateExecutor implements TupleIterator {
     private final TableHeap tableHeap;
     private final Schema schema;
     private final List<SetClauseNode> setClauses;
-    private final Transaction txn; // *** 新增成员变量 ***
+    private final Transaction txn;
     private boolean done = false;
+
+    private final LockManager lockManager;
+    private final PageId firstPageId;
 
     // *** 修改点：构造函数增加Transaction参数 ***
     public UpdateExecutor(TupleIterator child, TableHeap tableHeap, Schema schema, List<SetClauseNode> setClauses, Transaction txn) {
@@ -27,6 +32,8 @@ public class UpdateExecutor implements TupleIterator {
         this.schema = schema;
         this.setClauses = setClauses;
         this.txn = txn;
+        this.lockManager = tableHeap.getLockManager();
+        this.firstPageId = tableHeap.getFirstPageId();
     }
 
     @Override
@@ -34,13 +41,22 @@ public class UpdateExecutor implements TupleIterator {
         if (done) {
             return null;
         }
+        try {
+            if (firstPageId != null && firstPageId.getPageNum() != -1) {
+                System.out.println("[DEBUG] UpdateExecutor acquiring X-lock on table (page " + firstPageId.getPageNum() + ") before scanning.");
+                lockManager.lockExclusive(txn, firstPageId);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Thread interrupted while acquiring table lock for UPDATE.", e);
+        }
+
         List<Tuple> tuplesToUpdate = new ArrayList<>();
         while (child.hasNext()) {
             tuplesToUpdate.add(child.next());
         }
         int updatedCount = 0;
-        while (child.hasNext()) {
-            Tuple oldTuple = child.next();
+        for (Tuple oldTuple : tuplesToUpdate) {
             List<Value> newValues = new ArrayList<>(oldTuple.getValues());
             for (SetClauseNode clause : setClauses) {
                 String colName = clause.column().name();
@@ -51,7 +67,7 @@ public class UpdateExecutor implements TupleIterator {
             Tuple newTuple = new Tuple(newValues);
 
             // *** 修改点：调用updateTuple时传入Transaction ***
-            if (tableHeap.updateTuple(newTuple, oldTuple.getRid(), txn)) {
+            if (tableHeap.updateTuple(newTuple, oldTuple.getRid(), txn, false)) {
                 updatedCount++;
             }
         }

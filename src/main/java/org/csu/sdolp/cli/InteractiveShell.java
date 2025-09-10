@@ -1,51 +1,65 @@
 package org.csu.sdolp.cli;
 
 import org.csu.sdolp.engine.QueryProcessor;
+
+import java.io.BufferedReader;
 import java.io.IOException; // 1. 引入 IOException
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
+import java.net.Socket;
 import java.util.Scanner;
 
 public class InteractiveShell {
 
     public static void main(String[] args) {
-        QueryProcessor queryProcessor = new QueryProcessor("minidb.data");
-        System.out.println("Welcome to MiniDB. Type 'exit;' to quit.");
+        String host = "localhost";
+        int port = 9999;
 
-        Scanner scanner = new Scanner(System.in);
-        StringBuilder commandBuilder = new StringBuilder();
+        System.out.println("Attempting to connect to MiniDB server at " + host + ":" + port + "...");
 
-        while (true) {
-            System.out.print("minidb> ");
-            String line = scanner.nextLine();
+        try (
+                Socket socket = new Socket(host, port);
+                PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+                BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                Scanner consoleScanner = new Scanner(System.in)
+        ) {
+            System.out.println("Successfully connected to MiniDB server. Type 'exit;' to quit.");
 
-            commandBuilder.append(line.trim()).append(" ");
-            if (!line.trim().endsWith(";")) {
-                continue;
+            StringBuilder commandBuilder = new StringBuilder();
+
+            while (true) {
+                System.out.print("MiniDB-client> ");
+                String line = consoleScanner.nextLine();
+
+                commandBuilder.append(line.trim()).append(" ");
+                if (!line.trim().endsWith(";")) {
+                    continue;
+                }
+
+                String sql = commandBuilder.toString();
+                commandBuilder.setLength(0);
+
+                if (sql.equalsIgnoreCase("exit; ")) {
+                    break;
+                }
+
+                // 将SQL语句发送到服务器
+                out.println(sql);
+
+                // 从服务器读取结果并打印
+                String serverResponse = in.readLine();
+                if (serverResponse != null) {
+                    // 将服务器返回的特殊标记替换回换行符
+                    System.out.println(serverResponse.replace("<br>", "\n"));
+                } else {
+                    System.out.println("Connection to server lost.");
+                    break;
+                }
             }
 
-            String sql = commandBuilder.toString();
-            commandBuilder.setLength(0);
-
-            if (sql.equalsIgnoreCase("exit; ")) {
-                System.out.println("Bye!");
-                break; // 跳出循环
-            }
-
-            try {
-                queryProcessor.execute(sql);
-            } catch (Exception e) {
-                System.err.println("Error: " + e.getMessage());
-            }
+        } catch (Exception e) {
+            System.err.println("Could not connect to server: " + e.getMessage());
         }
-        scanner.close();
-
-        // --- 2. 在循环结束后，关闭 queryProcessor ---
-        try {
-            System.out.println("Shutting down database...");
-            queryProcessor.close();
-            System.out.println("Database shut down successfully.");
-        } catch (IOException e) {
-            System.err.println("Error during database shutdown: " + e.getMessage());
-            e.printStackTrace();
-        }
+        System.out.println("Bye!");
     }
 }

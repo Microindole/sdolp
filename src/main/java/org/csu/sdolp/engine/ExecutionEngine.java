@@ -12,6 +12,7 @@ import org.csu.sdolp.executor.*;
 import org.csu.sdolp.executor.expressions.AbstractPredicate;
 import org.csu.sdolp.executor.expressions.ComparisonPredicate;
 import org.csu.sdolp.storage.buffer.BufferPoolManager;
+import org.csu.sdolp.transaction.LockManager;
 import org.csu.sdolp.transaction.Transaction;
 import org.csu.sdolp.transaction.log.LogManager;
 import org.csu.sdolp.executor.expressions.LogicalPredicate;
@@ -26,47 +27,47 @@ public class ExecutionEngine {
     private final BufferPoolManager bufferPoolManager;
     private final Catalog catalog;
     private final LogManager logManager;
+    private final LockManager lockManager;
 
-    public ExecutionEngine(BufferPoolManager bufferPoolManager, Catalog catalog, LogManager logManager) {
+
+    public ExecutionEngine(BufferPoolManager bufferPoolManager, Catalog catalog,
+                           LogManager logManager, LockManager lockManager) {
         this.bufferPoolManager = bufferPoolManager;
         this.catalog = catalog;
         this.logManager = logManager;
+        this.lockManager = lockManager;
     }
 
-    public TupleIterator execute(PlanNode plan, Transaction txn) throws IOException {
+    public TupleIterator execute(PlanNode plan, Transaction txn) throws IOException, InterruptedException {
         return buildExecutorTree(plan, txn);
     }
 
-    private TupleIterator buildExecutorTree(PlanNode plan, Transaction txn) throws IOException {
-        if (plan instanceof CreateTablePlanNode) {
-            return new CreateTableExecutor((CreateTablePlanNode) plan, catalog);
+    private TupleIterator buildExecutorTree(PlanNode plan, Transaction txn) throws IOException, InterruptedException {
+        if (plan instanceof CreateTablePlanNode createTablePlan) {
+            return new CreateTableExecutor(createTablePlan, catalog);
         }
         if (plan instanceof InsertPlanNode insertPlan) {
-            TableHeap tableHeap = new TableHeap(bufferPoolManager, insertPlan.getTableInfo(), logManager);
+            TableHeap tableHeap = new TableHeap(bufferPoolManager, insertPlan.getTableInfo(), logManager, lockManager);
             return new InsertExecutor(insertPlan, tableHeap, txn);
         }
         if (plan instanceof SeqScanPlanNode seqScanPlan) {
-            TableHeap tableHeap = new TableHeap(bufferPoolManager, seqScanPlan.getTableInfo(), logManager);
-            return new SeqScanExecutor(tableHeap);
+            TableHeap tableHeap = new TableHeap(bufferPoolManager, seqScanPlan.getTableInfo(), logManager, lockManager);
+            return new SeqScanExecutor(tableHeap, txn);
         }
 
-        // --- 修正点 1 ---
-        // 将 plan 转换为 FilterPlanNode 类型的变量 filterPlan
         if (plan instanceof FilterPlanNode filterPlan) {
             TupleIterator childExecutor = buildExecutorTree(filterPlan.getChild(), txn);
             AbstractPredicate predicate = createPredicateFromAst(filterPlan.getPredicate(), filterPlan.getChild().getOutputSchema());
             return new FilterExecutor(childExecutor, predicate);
         }
 
-        // --- 修正点 2 ---
-        // 将 plan 转换为 ProjectPlanNode 类型的变量 projectPlan
         if (plan instanceof ProjectPlanNode projectPlan) {
             TupleIterator childExecutor = buildExecutorTree(projectPlan.getChild(), txn);
             List<Integer> columnIndexes = new ArrayList<>();
             Schema childSchema = projectPlan.getChild().getOutputSchema();
-            for(String colName : projectPlan.getOutputSchema().getColumns().stream().map(c -> c.getName()).collect(Collectors.toList())) {
-                for(int i = 0; i < childSchema.getColumns().size(); i++) {
-                    if(childSchema.getColumns().get(i).getName().equalsIgnoreCase(colName)) {
+            for (String colName : projectPlan.getOutputSchema().getColumns().stream().map(c -> c.getName()).collect(Collectors.toList())) {
+                for (int i = 0; i < childSchema.getColumns().size(); i++) {
+                    if (childSchema.getColumns().get(i).getName().equalsIgnoreCase(colName)) {
                         columnIndexes.add(i);
                         break;
                     }
@@ -79,7 +80,7 @@ public class ExecutionEngine {
         // 将 plan 转换为 DeletePlanNode 类型的变量 deletePlan
         if (plan instanceof DeletePlanNode deletePlan) {
             TupleIterator childPlan = buildExecutorTree(deletePlan.getChild(), txn);
-            TableHeap tableHeap = new TableHeap(bufferPoolManager, deletePlan.getTableInfo(), logManager);
+            TableHeap tableHeap = new TableHeap(bufferPoolManager, deletePlan.getTableInfo(), logManager, lockManager);
             return new DeleteExecutor(childPlan, tableHeap, txn);
         }
 
@@ -87,7 +88,7 @@ public class ExecutionEngine {
         // 将 plan 转换为 UpdatePlanNode 类型的变量 updatePlan
         if (plan instanceof UpdatePlanNode updatePlan) {
             TupleIterator childPlan = buildExecutorTree(updatePlan.getChild(), txn);
-            TableHeap tableHeap = new TableHeap(bufferPoolManager, updatePlan.getTableInfo(), logManager);
+            TableHeap tableHeap = new TableHeap(bufferPoolManager, updatePlan.getTableInfo(), logManager, lockManager);
             return new UpdateExecutor(childPlan, tableHeap, updatePlan.getTableInfo().getSchema(), updatePlan.getSetClauses(), txn);
         }
         if (plan instanceof SortPlanNode sortPlan) {
