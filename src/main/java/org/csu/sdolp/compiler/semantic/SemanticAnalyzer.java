@@ -148,10 +148,42 @@ public class SemanticAnalyzer {
         }
     }
 
+//    private void analyzeExpression(ExpressionNode expr, TableInfo tableInfo) {
+//        if (expr instanceof BinaryExpressionNode) {
+//            BinaryExpressionNode binaryExpr = (BinaryExpressionNode) expr;
+//            // 简单检查：左边是列名，右边是字面量
+//            if (!(binaryExpr.left() instanceof IdentifierNode)) {
+//                throw new SemanticException("WHERE clause must have a column name on the left side of the operator.");
+//            }
+//            if (!(binaryExpr.right() instanceof LiteralNode)) {
+//                throw new SemanticException("WHERE clause must have a literal value on the right side of the operator.");
+//            }
+//
+//            IdentifierNode colNode = (IdentifierNode) binaryExpr.left();
+//            LiteralNode literalNode = (LiteralNode) binaryExpr.right();
+//
+//            Column column = checkColumnExists(tableInfo, colNode.name());
+//
+//            // 类型检查
+//            DataType expectedType = column.getType();
+//            DataType actualType = getLiteralType(literalNode);
+//            if(expectedType != actualType) {
+//                throw new SemanticException("Data type mismatch in WHERE clause for column '" + colNode.name() + "'. Expected " + expectedType + " but got " + actualType + ".");
+//            }
+//        }
+//    }
     private void analyzeExpression(ExpressionNode expr, TableInfo tableInfo) {
-        if (expr instanceof BinaryExpressionNode) {
-            BinaryExpressionNode binaryExpr = (BinaryExpressionNode) expr;
-            // 简单检查：左边是列名，右边是字面量
+        if (expr instanceof BinaryExpressionNode binaryExpr) {
+            TokenType opType = binaryExpr.operator().type();
+
+            // 如果是逻辑运算符，则递归分析左右子表达式
+            if (opType == TokenType.AND || opType == TokenType.OR) {
+                analyzeExpression(binaryExpr.left(), tableInfo);
+                analyzeExpression(binaryExpr.right(), tableInfo);
+                return; // 逻辑运算符本身无需进一步检查
+            }
+
+            // 如果是比较运算符，则检查操作数
             if (!(binaryExpr.left() instanceof IdentifierNode)) {
                 throw new SemanticException("WHERE clause must have a column name on the left side of the operator.");
             }
@@ -164,12 +196,15 @@ public class SemanticAnalyzer {
 
             Column column = checkColumnExists(tableInfo, colNode.name());
 
-            // 类型检查
             DataType expectedType = column.getType();
             DataType actualType = getLiteralType(literalNode);
             if(expectedType != actualType) {
                 throw new SemanticException("Data type mismatch in WHERE clause for column '" + colNode.name() + "'. Expected " + expectedType + " but got " + actualType + ".");
             }
+        } else if (expr instanceof IdentifierNode || expr instanceof LiteralNode) {
+            // 单独的标识符或字面量在WHERE子句中是无效的，但此处暂不处理
+        } else {
+            throw new SemanticException("Unsupported expression type in WHERE clause: " + expr.getClass().getSimpleName());
         }
     }
 

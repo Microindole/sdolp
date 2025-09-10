@@ -29,7 +29,8 @@ public enum TokenType {
     DESC,       // "DESC"
     LIMIT,      // "LIMIT"
     // ===================================
-
+    AND,        // "AND"
+    OR,         // "OR"
     // ---- 标识符 (Identifier) ----
     IDENTIFIER, // 表名、列名等
 

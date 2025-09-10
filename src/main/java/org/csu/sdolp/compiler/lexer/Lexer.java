@@ -41,6 +41,8 @@ public class Lexer {
         keywords.put("asc", TokenType.ASC);
         keywords.put("desc", TokenType.DESC);
         keywords.put("limit", TokenType.LIMIT);
+        keywords.put("and", TokenType.AND);
+        keywords.put("or", TokenType.OR);
     }
 
     public Lexer(String input) {

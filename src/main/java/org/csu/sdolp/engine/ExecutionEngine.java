@@ -14,6 +14,7 @@ import org.csu.sdolp.executor.expressions.ComparisonPredicate;
 import org.csu.sdolp.storage.buffer.BufferPoolManager;
 import org.csu.sdolp.transaction.Transaction;
 import org.csu.sdolp.transaction.log.LogManager;
+import org.csu.sdolp.executor.expressions.LogicalPredicate;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -102,20 +103,43 @@ public class ExecutionEngine {
         throw new UnsupportedOperationException("Unsupported plan node: " + plan.getClass().getSimpleName());
     }
 
+//    private AbstractPredicate createPredicateFromAst(ExpressionNode expression, Schema schema) {
+//        if (expression instanceof BinaryExpressionNode node) {
+//            if (!(node.left() instanceof IdentifierNode) || !(node.right() instanceof LiteralNode)) {
+//                throw new UnsupportedOperationException("WHERE clause only supports 'column_name op literal' format.");
+//            }
+//
+//            String columnName = ((IdentifierNode) node.left()).name();
+//            int columnIndex = getColumnIndex(schema, columnName);
+//            String operator = node.operator().type().name();
+//            Value literalValue = getLiteralValue((LiteralNode) node.right());
+//
+//            return new ComparisonPredicate(columnIndex, literalValue, operator);
+//        }
+//        throw new UnsupportedOperationException("Unsupported expression type in WHERE clause.");
+//    }
     private AbstractPredicate createPredicateFromAst(ExpressionNode expression, Schema schema) {
         if (expression instanceof BinaryExpressionNode node) {
+            String operatorName = node.operator().type().name();
+            // 检查是否是逻辑运算符
+            if ("AND".equals(operatorName) || "OR".equals(operatorName)) {
+                AbstractPredicate left = createPredicateFromAst(node.left(), schema);
+                AbstractPredicate right = createPredicateFromAst(node.right(), schema);
+                return new LogicalPredicate(left, right, operatorName);
+            }
+
+            // 否则，是比较运算符
             if (!(node.left() instanceof IdentifierNode) || !(node.right() instanceof LiteralNode)) {
                 throw new UnsupportedOperationException("WHERE clause only supports 'column_name op literal' format.");
             }
 
             String columnName = ((IdentifierNode) node.left()).name();
             int columnIndex = getColumnIndex(schema, columnName);
-            String operator = node.operator().type().name();
             Value literalValue = getLiteralValue((LiteralNode) node.right());
 
-            return new ComparisonPredicate(columnIndex, literalValue, operator);
+            return new ComparisonPredicate(columnIndex, literalValue, operatorName);
         }
-        throw new UnsupportedOperationException("Unsupported expression type in WHERE clause.");
+        throw new UnsupportedOperationException("Unsupported expression type in WHERE clause: " + expression.getClass().getSimpleName());
     }
 
     private int getColumnIndex(Schema schema, String columnName) {

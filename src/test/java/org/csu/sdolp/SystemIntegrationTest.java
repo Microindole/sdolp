@@ -87,6 +87,23 @@ public class SystemIntegrationTest {
         queryProcessor.execute("SELECT * FROM employees ORDER BY age ASC LIMIT 2;");
     }
     @Test
+    void testComplexWhereClauseFlow() {
+        System.out.println("\n--- Test: Complex WHERE clause with AND/OR ---");
+        queryProcessor.execute("CREATE TABLE students (id INT, name VARCHAR, age INT, major VARCHAR);");
+        queryProcessor.execute("INSERT INTO students (id, name, age, major) VALUES (1, 'Alice', 20, 'CS');");
+        queryProcessor.execute("INSERT INTO students (id, name, age, major) VALUES (2, 'Bob', 22, 'EE');");
+        queryProcessor.execute("INSERT INTO students (id, name, age, major) VALUES (3, 'Charlie', 20, 'CS');");
+        queryProcessor.execute("INSERT INTO students (id, name, age, major) VALUES (4, 'David', 23, 'CS');");
+
+        System.out.println("\n--- Selecting CS students with age = 20 (Using AND) ---");
+        System.out.println("--- Expected: Alice, Charlie ---");
+        queryProcessor.execute("SELECT name FROM students WHERE age = 20 AND major = 'CS';");
+
+        System.out.println("\n--- Selecting EE students OR students older than 22 (Using OR) ---");
+        System.out.println("--- Expected: Bob, David ---");
+        queryProcessor.execute("SELECT name FROM students WHERE major = 'EE' OR age > 22;");
+    }
+    @Test
     void testDataPersistence() throws IOException {
         System.out.println("--- Test: Data Persistence ---");
         queryProcessor.execute("CREATE TABLE persistent_table (id INT);");

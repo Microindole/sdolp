@@ -247,8 +247,32 @@ public class Parser {
         }
     }
     // ====== 新增：表达式解析相关方法 ======
+    // ====== 表达式解析逻辑重构 (Phase 2) ======
+    // parseExpression 是新的入口
     private ExpressionNode parseExpression() {
-        return parseComparison();
+        return parseOrExpression();
+    }
+
+    // OR 的优先级最低
+    private ExpressionNode parseOrExpression() {
+        ExpressionNode left = parseAndExpression();
+        while (match(TokenType.OR)) {
+            Token operator = previous();
+            ExpressionNode right = parseAndExpression();
+            left = new BinaryExpressionNode(left, operator, right);
+        }
+        return left;
+    }
+
+    // AND 的优先级高于 OR
+    private ExpressionNode parseAndExpression() {
+        ExpressionNode left = parseComparison();
+        while (match(TokenType.AND)) {
+            Token operator = previous();
+            ExpressionNode right = parseComparison();
+            left = new BinaryExpressionNode(left, operator, right);
+        }
+        return left;
     }
 
     private ExpressionNode parseComparison() {
