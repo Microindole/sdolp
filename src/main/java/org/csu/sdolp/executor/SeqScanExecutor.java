@@ -1,5 +1,6 @@
 package org.csu.sdolp.executor;
 
+import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.transaction.Transaction;
 
@@ -28,4 +29,10 @@ public class SeqScanExecutor implements TupleIterator {
         if (!isInitialized) return false;
         return tableHeap.hasNext();
     }
+    @Override
+    public Schema getOutputSchema() {
+        return tableHeap.getOutputSchema();
+    }
+
+
 }

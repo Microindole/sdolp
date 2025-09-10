@@ -63,6 +63,11 @@ public class TableHeap implements TupleIterator {
         this.currentSlotIndex = 0;
     }
 
+    @Override
+    public Schema getOutputSchema() {
+        return this.schema;
+    }
+
     // next() 和 hasNext() 方法保持不变，它们是只读操作
     @Override
     public Tuple next() throws IOException {

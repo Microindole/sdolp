@@ -3,6 +3,7 @@ package org.csu.sdolp.engine;
 import org.csu.sdolp.catalog.Catalog;
 import org.csu.sdolp.common.exception.ParseException;
 import org.csu.sdolp.common.exception.SemanticException;
+import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.compiler.lexer.Lexer;
 import org.csu.sdolp.compiler.lexer.Token;
@@ -24,6 +25,7 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class QueryProcessor {
 
@@ -64,6 +66,7 @@ public class QueryProcessor {
     /**
      * 主执行方法，它会捕获所有异常并将其格式化为错误信息返回。
      * 它将执行结果或错误信息作为字符串返回。
+     *
      * @param sql 要执行的SQL语句
      * @return 包含结果集或错误信息的字符串
      */
@@ -122,12 +125,13 @@ public class QueryProcessor {
 
     /**
      * 将执行器返回的元组迭代器格式化为字符串。
+     *
      * @param iterator 元组迭代器
      * @return 格式化后的结果字符串
      */
     private String formatResults(TupleIterator iterator) throws IOException {
         if (iterator == null) {
-            return "Query executed successfully, no rows returned.";
+            return "Query OK.";
         }
         List<Tuple> results = new ArrayList<>();
         while (iterator.hasNext()) {
@@ -138,12 +142,73 @@ public class QueryProcessor {
             return "Query finished, 0 rows affected or returned.";
         }
 
-        StringBuilder sb = new StringBuilder();
-        for (Tuple tuple : results) {
-            sb.append(tuple.toString()).append("\n");
-        }
-        sb.append("Query finished, ").append(results.size()).append(" rows returned/affected.");
+        Schema schema = iterator.getOutputSchema();
 
+        if (results.isEmpty()) {
+            if (schema != null && !schema.getColumns().isEmpty()) {
+                // 如果是 SELECT 语句但没有结果，打印表头和空集信息
+                StringBuilder sb = new StringBuilder();
+                List<String> columnNames = schema.getColumnNames();
+                List<Integer> columnWidths = columnNames.stream().map(String::length).collect(Collectors.toList());
+
+                sb.append(getSeparator(columnWidths)).append("\n");
+                sb.append(getRow(columnNames, columnWidths)).append("\n");
+                sb.append(getSeparator(columnWidths)).append("\n");
+                sb.append("Query finished, 0 rows returned.");
+                return sb.toString();
+            }
+            // 对应 UPDATE/DELETE 影响0行的情况
+            return "Query OK, 0 rows affected.";
+        }
+
+        // --- 核心打印逻辑 ---
+        StringBuilder sb = new StringBuilder();
+        List<String> columnNames = schema.getColumnNames();
+
+        // 1. 计算每列的最大宽度
+        List<Integer> columnWidths = new ArrayList<>();
+        for (int i = 0; i < columnNames.size(); i++) {
+            int maxWidth = columnNames.get(i).length();
+            for (Tuple tuple : results) {
+                maxWidth = Math.max(maxWidth, tuple.getValues().get(i).getValue().toString().length());
+            }
+            columnWidths.add(maxWidth);
+        }
+
+        // 2. 打印边框和表头
+        sb.append(getSeparator(columnWidths)).append("\n");
+        sb.append(getRow(columnNames, columnWidths)).append("\n");
+        sb.append(getSeparator(columnWidths)).append("\n");
+
+        // 3. 打印数据行
+        for (Tuple tuple : results) {
+            List<String> values = tuple.getValues().stream()
+                    .map(v -> v.getValue().toString())
+                    .collect(Collectors.toList());
+            sb.append(getRow(values, columnWidths)).append("\n");
+        }
+
+        // 4. 打印底部边框和最终消息
+        sb.append(getSeparator(columnWidths)).append("\n");
+        sb.append("Query finished, ").append(results.size()).append(" rows returned.");
+
+        return sb.toString();
+    }
+
+
+    private String getRow(List<String> cells, List<Integer> widths) {
+        StringBuilder sb = new StringBuilder("|");
+        for (int i = 0; i < cells.size(); i++) {
+            sb.append(String.format(" %-" + widths.get(i) + "s |", cells.get(i)));
+        }
+        return sb.toString();
+    }
+
+    private String getSeparator(List<Integer> widths) {
+        StringBuilder sb = new StringBuilder("+");
+        for (Integer width : widths) {
+            sb.append("-".repeat(width + 2)).append("+");
+        }
         return sb.toString();
     }
 }

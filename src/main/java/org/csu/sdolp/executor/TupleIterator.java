@@ -1,5 +1,6 @@
 package org.csu.sdolp.executor;
 
+import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 import java.io.IOException;
 
@@ -21,4 +22,6 @@ public interface TupleIterator {
      * @return 如果有则返回 true
      */
     boolean hasNext() throws IOException;
+
+    Schema getOutputSchema();
 }

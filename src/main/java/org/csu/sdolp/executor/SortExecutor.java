@@ -59,6 +59,8 @@ public class SortExecutor implements TupleIterator {
         Comparator<Tuple> comparator = (t1, t2) -> {
             Value v1 = t1.getValues().get(finalColIndex);
             Value v2 = t2.getValues().get(finalColIndex);
+            if (v1 == null || v1.getValue() == null) return -1;
+            if (v2 == null || v2.getValue() == null) return 1;
             return ((Comparable) v1.getValue()).compareTo(v2.getValue());
         };
 
@@ -83,5 +85,9 @@ public class SortExecutor implements TupleIterator {
     public boolean hasNext() throws IOException {
         init(); // 确保数据已排序
         return cursor < sortedTuples.size();
+    }
+    @Override
+    public Schema getOutputSchema() {
+        return child.getOutputSchema();
     }
 }

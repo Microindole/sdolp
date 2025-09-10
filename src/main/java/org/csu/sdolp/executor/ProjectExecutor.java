@@ -1,5 +1,7 @@
 package org.csu.sdolp.executor;
 
+import org.csu.sdolp.common.model.Column;
+import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.common.model.Value;
 
@@ -13,6 +15,7 @@ import java.util.List;
 public class ProjectExecutor implements TupleIterator {
     private final TupleIterator child;
     private final List<Integer> columnIndexes;
+    private final Schema outputSchema;
 
     /**
      * @param child          子执行器 (如 FilterExecutor 或 SeqScanExecutor)
@@ -21,6 +24,12 @@ public class ProjectExecutor implements TupleIterator {
     public ProjectExecutor(TupleIterator child, List<Integer> columnIndexes) {
         this.child = child;
         this.columnIndexes = columnIndexes;
+        Schema inputSchema = child.getOutputSchema();
+        List<Column> projectedColumns = new ArrayList<>();
+        for (int index : columnIndexes) {
+            projectedColumns.add(inputSchema.getColumns().get(index));
+        }
+        this.outputSchema = new Schema(projectedColumns);
     }
 
     @Override
@@ -46,4 +55,10 @@ public class ProjectExecutor implements TupleIterator {
     public boolean hasNext() throws IOException {
         return child.hasNext();
     }
+
+    @Override
+    public Schema getOutputSchema() {
+        return this.outputSchema;
+    }
+
 }

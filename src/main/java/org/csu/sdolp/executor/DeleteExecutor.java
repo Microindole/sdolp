@@ -1,8 +1,6 @@
 package org.csu.sdolp.executor;
 
-import org.csu.sdolp.common.model.RID;
-import org.csu.sdolp.common.model.Tuple;
-import org.csu.sdolp.common.model.Value;
+import org.csu.sdolp.common.model.*;
 import org.csu.sdolp.storage.page.PageId;
 import org.csu.sdolp.transaction.LockManager;
 import org.csu.sdolp.transaction.Transaction;
@@ -19,6 +17,7 @@ public class DeleteExecutor implements TupleIterator {
     private boolean done = false;
     private final LockManager lockManager;
     private final PageId firstPageId;
+    private static final Schema AFFECTED_ROWS_SCHEMA = new Schema(List.of(new Column("deleted_rows", DataType.INT)));
 
     // *** 修改点：构造函数增加Transaction参数 ***
     public DeleteExecutor(TupleIterator child, TableHeap tableHeap, Transaction txn) {
@@ -66,5 +65,10 @@ public class DeleteExecutor implements TupleIterator {
     @Override
     public boolean hasNext() throws IOException {
         return !done;
+    }
+
+    @Override
+    public Schema getOutputSchema() {
+        return AFFECTED_ROWS_SCHEMA;
     }
 }

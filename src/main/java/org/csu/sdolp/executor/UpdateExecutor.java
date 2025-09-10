@@ -1,8 +1,6 @@
 package org.csu.sdolp.executor;
 
-import org.csu.sdolp.common.model.Schema;
-import org.csu.sdolp.common.model.Tuple;
-import org.csu.sdolp.common.model.Value;
+import org.csu.sdolp.common.model.*;
 import org.csu.sdolp.compiler.parser.ast.LiteralNode;
 import org.csu.sdolp.compiler.parser.ast.SetClauseNode;
 import org.csu.sdolp.storage.page.PageId;
@@ -24,6 +22,7 @@ public class UpdateExecutor implements TupleIterator {
 
     private final LockManager lockManager;
     private final PageId firstPageId;
+    private static final Schema AFFECTED_ROWS_SCHEMA = new Schema(List.of(new Column("updated_rows", DataType.INT)));
 
     // *** 修改点：构造函数增加Transaction参数 ***
     public UpdateExecutor(TupleIterator child, TableHeap tableHeap, Schema schema, List<SetClauseNode> setClauses, Transaction txn) {
@@ -97,5 +96,10 @@ public class UpdateExecutor implements TupleIterator {
             case STRING_CONST -> new Value(lexeme);
             default -> throw new IllegalStateException("Unsupported literal type.");
         };
+    }
+
+    @Override
+    public Schema getOutputSchema() {
+        return AFFECTED_ROWS_SCHEMA;
     }
 }

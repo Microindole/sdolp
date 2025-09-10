@@ -1,5 +1,6 @@
 package org.csu.sdolp.executor;
 
+import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.executor.expressions.AbstractPredicate;
 import java.io.IOException;
@@ -50,5 +51,10 @@ public class FilterExecutor implements TupleIterator {
             }
         }
         return false;
+    }
+
+    @Override
+    public Schema getOutputSchema() {
+        return child.getOutputSchema();
     }
 }

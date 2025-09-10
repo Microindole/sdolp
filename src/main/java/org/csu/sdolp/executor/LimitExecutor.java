@@ -1,5 +1,6 @@
 package org.csu.sdolp.executor;
 
+import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 import java.io.IOException;
 
@@ -29,5 +30,10 @@ public class LimitExecutor implements TupleIterator {
     @Override
     public boolean hasNext() throws IOException {
         return count < limit && child.hasNext();
+    }
+
+    @Override
+    public Schema getOutputSchema() {
+        return child.getOutputSchema();
     }
 }
