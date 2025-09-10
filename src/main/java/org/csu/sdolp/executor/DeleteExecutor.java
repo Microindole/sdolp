@@ -3,6 +3,8 @@ package org.csu.sdolp.executor;
 import org.csu.sdolp.common.model.RID;
 import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.common.model.Value;
+import org.csu.sdolp.transaction.Transaction;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -11,11 +13,14 @@ import java.util.List;
 public class DeleteExecutor implements TupleIterator {
     private final TupleIterator child;
     private final TableHeap tableHeap;
+    private final Transaction txn; // *** 新增成员变量 ***
     private boolean done = false;
 
-    public DeleteExecutor(TupleIterator child, TableHeap tableHeap) {
+    // *** 修改点：构造函数增加Transaction参数 ***
+    public DeleteExecutor(TupleIterator child, TableHeap tableHeap, Transaction txn) {
         this.child = child;
         this.tableHeap = tableHeap;
+        this.txn = txn;
     }
 
     @Override
@@ -23,19 +28,15 @@ public class DeleteExecutor implements TupleIterator {
         if (done) {
             return null;
         }
-        List<RID> ridsToDelete = new ArrayList<>();
-        while (child.hasNext()) {
-            ridsToDelete.add(child.next().getRid());
-        }
-        // 阶段二：根据收集到的 RID 列表执行删除
         int deletedCount = 0;
-        for (RID rid : ridsToDelete) {
-            if (tableHeap.deleteTuple(rid)) {
+        while (child.hasNext()) {
+            Tuple tupleToDelete = child.next();
+            // *** 修改点：调用deleteTuple时传入Transaction ***
+            if (tableHeap.deleteTuple(tupleToDelete.getRid(), txn)) {
                 deletedCount++;
             }
         }
         done = true;
-        // 返回一个包含删除数量的元组
         return new Tuple(Collections.singletonList(new Value(deletedCount)));
     }
 

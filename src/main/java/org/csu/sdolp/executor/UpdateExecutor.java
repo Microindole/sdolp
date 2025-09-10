@@ -5,6 +5,7 @@ import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.common.model.Value;
 import org.csu.sdolp.compiler.parser.ast.LiteralNode;
 import org.csu.sdolp.compiler.parser.ast.SetClauseNode;
+import org.csu.sdolp.transaction.Transaction;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -16,13 +17,16 @@ public class UpdateExecutor implements TupleIterator {
     private final TableHeap tableHeap;
     private final Schema schema;
     private final List<SetClauseNode> setClauses;
+    private final Transaction txn; // *** 新增成员变量 ***
     private boolean done = false;
 
-    public UpdateExecutor(TupleIterator child, TableHeap tableHeap, Schema schema, List<SetClauseNode> setClauses) {
+    // *** 修改点：构造函数增加Transaction参数 ***
+    public UpdateExecutor(TupleIterator child, TableHeap tableHeap, Schema schema, List<SetClauseNode> setClauses, Transaction txn) {
         this.child = child;
         this.tableHeap = tableHeap;
         this.schema = schema;
         this.setClauses = setClauses;
+        this.txn = txn;
     }
 
     @Override
@@ -30,19 +34,10 @@ public class UpdateExecutor implements TupleIterator {
         if (done) {
             return null;
         }
-
-        List<Tuple> tuplesToUpdate = new ArrayList<>();
-        while (child.hasNext()) {
-            tuplesToUpdate.add(child.next());
-        }
-
-        // 阶段二：根据收集到的列表执行更新
         int updatedCount = 0;
-        for (Tuple oldTuple : tuplesToUpdate) {
-            // 1. 创建新元组的副本
+        while (child.hasNext()) {
+            Tuple oldTuple = child.next();
             List<Value> newValues = new ArrayList<>(oldTuple.getValues());
-
-            // 2. 根据 SET 子句修改新元组的值
             for (SetClauseNode clause : setClauses) {
                 String colName = clause.column().name();
                 int colIndex = getColumnIndex(schema, colName);
@@ -51,14 +46,12 @@ public class UpdateExecutor implements TupleIterator {
             }
             Tuple newTuple = new Tuple(newValues);
 
-            // 3. 调用 TableHeap 执行更新
-            if (tableHeap.updateTuple(newTuple, oldTuple.getRid())) {
+            // *** 修改点：调用updateTuple时传入Transaction ***
+            if (tableHeap.updateTuple(newTuple, oldTuple.getRid(), txn)) {
                 updatedCount++;
             }
         }
-
         done = true;
-        // 返回一个包含更新数量的元组
         return new Tuple(Collections.singletonList(new Value(updatedCount)));
     }
 

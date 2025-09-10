@@ -1,5 +1,7 @@
 package org.csu.sdolp.transaction.log;
 
+import lombok.Getter;
+import lombok.Setter;
 import org.csu.sdolp.common.model.RID;
 import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
@@ -15,17 +17,26 @@ public class LogRecord {
 
     // --- Header ---
     private int recordSize = 0; // 整个记录的大小
+    @Setter
+    @Getter
     private long lsn = -1;      // 日志序列号
+    @Getter
     private int transactionId;
+    @Getter
     private long prevLSN = -1;  // 该事务的上一条日志的 LSN
+    @Getter
     private LogType logType;
 
     // --- Payload for INSERT/DELETE ---
+    @Getter
     private RID rid;
+    @Getter
     private Tuple tuple; // INSERT: new tuple, DELETE: old tuple
 
     // --- Payload for UPDATE ---
+    @Getter
     private Tuple oldTuple;
+    @Getter
     private Tuple newTuple;
 
     // 构造函数 for INSERT/DELETE
@@ -110,7 +121,6 @@ public class LogRecord {
     /**
      * 从 ByteBuffer 反序列化 LogRecord.
      * @param buffer 包含日志数据的 ByteBuffer
-     * @param schemaMap (高级功能，用于恢复) 在简单场景下可以传入 null
      * @return 反序列化后的 LogRecord 对象
      */
     public static LogRecord fromBytes(ByteBuffer buffer, Schema schema) {
@@ -152,9 +162,4 @@ public class LogRecord {
         return record;
     }
 
-    // Getters
-    public long getLsn() { return lsn; }
-    public void setLsn(long lsn) { this.lsn = lsn; }
-    public LogType getLogType() { return logType; }
-    public int getTransactionId() { return transactionId; }
 }

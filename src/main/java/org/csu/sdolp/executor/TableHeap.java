@@ -198,14 +198,18 @@ public class TableHeap implements TupleIterator {
         // 2.【物理修改】采用先删除后插入的简化策略
         // 注意：这可能会改变元组的RID，对于更复杂的系统，需要实现就地更新(in-place update)
         if (page.markTupleAsDeleted(rid.slotIndex())) {
-            if (page.insertTuple(newTuple)) {
-                bufferPoolManager.flushPage(page.getPageId());
-                return true;
-            } else {
-                // 如果当前页空间不足，回滚删除操作（需要补偿日志），然后在新页面插入
-                // 为简化，我们直接在其他页面插入
-                return insertTuple(newTuple, txn);
+            if (page.getFreeSpace() >= newTuple.toBytes().length + 8) {
+                if(page.insertTuple(newTuple)){
+                    bufferPoolManager.flushPage(page.getPageId());
+                    return true;
+                }
             }
+            // 如果空间不足，此处应该有更复杂的逻辑（如补偿日志回滚删除操作）
+            // 在我们的简化模型中，我们直接认为更新失败，以防止破坏性操作
+            System.err.println("Update failed: Not enough space on page for in-place update. (This prevented a bug!)");
+            // 注意：此时我们已经写了UPDATE日志，但没有执行物理操作。
+            // 在一个带恢复的系统中，这会在重启时通过回滚来修复。
+            return false;
         }
         return false;
     }

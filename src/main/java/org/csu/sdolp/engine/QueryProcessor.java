@@ -23,11 +23,6 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 数据库查询处理器核心引擎。
- * 负责接收SQL字符串，并协调编译器、执行器和存储层来完成整个查询处理流程。
- * 这是连接所有数据库组件的中央枢纽。
- */
 public class QueryProcessor {
 
     private final DiskManager diskManager;
@@ -35,7 +30,6 @@ public class QueryProcessor {
     private final Catalog catalog;
     private final Planner planner;
     private final ExecutionEngine executionEngine;
-
     private final LogManager logManager;
     private final LockManager lockManager;
     private final TransactionManager transactionManager;
@@ -51,68 +45,66 @@ public class QueryProcessor {
             this.logManager = new LogManager(dbFilePath + ".log");
             this.lockManager = new LockManager();
             this.transactionManager = new TransactionManager(lockManager, logManager);
-            this.executionEngine = new ExecutionEngine(bufferPoolManager, catalog);
+            // *** 修改点：将LogManager传入ExecutionEngine ***
+            this.executionEngine = new ExecutionEngine(bufferPoolManager, catalog, logManager);
         } catch (IOException e) {
             throw new RuntimeException("Failed to initialize database engine", e);
         }
     }
 
-    public void close() throws IOException{
-        // 确保所有数据在关闭前都写入磁盘
+    public void close() throws IOException {
         bufferPoolManager.flushAllPages();
-        logManager.flush(); // 关闭前也确保日志刷盘
+        logManager.flush();
         diskManager.close();
         logManager.close();
     }
 
-    /**
-     * 执行一条SQL语句的主入口方法。
-     * @param sql 用户输入的SQL字符串
-     */
     public void execute(String sql) {
-        Transaction txn = transactionManager.begin();
+        Transaction txn = null; // 提前声明
         try {
+            txn = transactionManager.begin();
             System.out.println("Executing: " + sql);
 
-            // 1. 词法分析: String -> List<Token>
             Lexer lexer = new Lexer(sql);
             List<Token> tokens = lexer.tokenize();
-
-            // 2. 语法分析: List<Token> -> Abstract Syntax Tree (AST)
             Parser parser = new Parser(tokens);
             StatementNode ast = parser.parse();
-            if (ast == null) return;
+            if (ast == null) {
+                transactionManager.abort(txn); // 如果是空语句，也中止事务
+                return;
+            }
 
-            // 3. 语义分析: 检查AST的逻辑正确性
             SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(catalog);
             semanticAnalyzer.analyze(ast);
             System.out.println("Semantic analysis passed.");
 
-            // 4. 计划生成: AST -> PlanNode Tree
             PlanNode plan = planner.createPlan(ast);
             System.out.println("Logical plan created.");
 
-            // 5. 执行: PlanNode Tree -> TupleIterator Tree -> Results
-            TupleIterator executor = executionEngine.execute(plan);
+            // *** 修改点：将Transaction对象传入execute方法 ***
+            TupleIterator executor = executionEngine.execute(plan, txn);
             System.out.println("Execution plan executed.");
 
-            // 暂时简化，我们在执行后直接提交
-            transactionManager.commit(txn);
-
-            // 6. 打印结果
+            // 执行器可能为null（如CREATE），或者迭代完成后才算成功
             if (executor != null) {
                 printResults(executor);
             }
 
-        } catch (ParseException | SemanticException | UnsupportedOperationException e) {
-            System.err.println("Error: " + e.getMessage());
-        } catch (Exception e) {
-            // ---- 发生任何错误时，中止事务 ----
-            System.err.println("Error occurred, aborting transaction " + txn.getTransactionId());
-            transactionManager.abort(txn);
+            transactionManager.commit(txn);
 
-            System.err.println("An unexpected error occurred: " + e.getMessage());
-            e.printStackTrace();
+        } catch (Exception e) {
+            if (txn != null) {
+                try {
+                    System.err.println("Error occurred, aborting transaction " + txn.getTransactionId());
+                    transactionManager.abort(txn);
+                } catch (IOException ioException) {
+                    System.err.println("Failed to abort transaction: " + ioException.getMessage());
+                }
+            }
+            System.err.println("Error: " + e.getMessage());
+            if (!(e instanceof ParseException || e instanceof SemanticException)) {
+                e.printStackTrace();
+            }
         }
     }
 

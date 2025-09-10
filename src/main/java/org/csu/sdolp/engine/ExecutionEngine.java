@@ -1,108 +1,98 @@
 package org.csu.sdolp.engine;
 
 import org.csu.sdolp.catalog.Catalog;
-import org.csu.sdolp.catalog.TableInfo;
 import org.csu.sdolp.common.model.Schema;
-import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.common.model.Value;
-import org.csu.sdolp.compiler.parser.ast.*;
+import org.csu.sdolp.compiler.parser.ast.BinaryExpressionNode;
+import org.csu.sdolp.compiler.parser.ast.ExpressionNode;
+import org.csu.sdolp.compiler.parser.ast.IdentifierNode;
+import org.csu.sdolp.compiler.parser.ast.LiteralNode;
 import org.csu.sdolp.compiler.planner.plan.*;
 import org.csu.sdolp.executor.*;
 import org.csu.sdolp.executor.expressions.AbstractPredicate;
 import org.csu.sdolp.executor.expressions.ComparisonPredicate;
 import org.csu.sdolp.storage.buffer.BufferPoolManager;
+import org.csu.sdolp.transaction.Transaction;
+import org.csu.sdolp.transaction.log.LogManager;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
-/**
- * 执行引擎.
- * 负责将逻辑执行计划(PlanNode)转换为物理执行计划(TupleIterator)树并执行它.
- */
+
 public class ExecutionEngine {
     private final BufferPoolManager bufferPoolManager;
     private final Catalog catalog;
+    private final LogManager logManager;
 
-    public ExecutionEngine(BufferPoolManager bufferPoolManager, Catalog catalog) {
+    public ExecutionEngine(BufferPoolManager bufferPoolManager, Catalog catalog, LogManager logManager) {
         this.bufferPoolManager = bufferPoolManager;
         this.catalog = catalog;
+        this.logManager = logManager;
     }
 
-    /**
-     * 执行一个执行计划
-     * @param plan 逻辑计划树的根节点
-     * @return 如果是查询语句，则返回结果的迭代器；如果是DDL/DML，则返回null
-     * @throws IOException
-     */
-    public TupleIterator execute(PlanNode plan) throws IOException {
-        return buildExecutorTree(plan);
+    public TupleIterator execute(PlanNode plan, Transaction txn) throws IOException {
+        return buildExecutorTree(plan, txn);
     }
 
-    /**
-     * 递归地将PlanNode树转换为Executor树
-     * @param plan 计划节点
-     * @return 执行器节点
-     * @throws IOException
-     */
-    private TupleIterator buildExecutorTree(PlanNode plan) throws IOException {
+    private TupleIterator buildExecutorTree(PlanNode plan, Transaction txn) throws IOException {
         if (plan instanceof CreateTablePlanNode) {
             return new CreateTableExecutor((CreateTablePlanNode) plan, catalog);
         }
-        if (plan instanceof InsertPlanNode) {
-            InsertPlanNode insertPlan = (InsertPlanNode) plan;
-            TableHeap tableHeap = new TableHeap(bufferPoolManager, insertPlan.getTableInfo());
-            return new InsertExecutor(insertPlan, tableHeap);
+        if (plan instanceof InsertPlanNode insertPlan) {
+            TableHeap tableHeap = new TableHeap(bufferPoolManager, insertPlan.getTableInfo(), logManager);
+            return new InsertExecutor(insertPlan, tableHeap, txn);
         }
-        if (plan instanceof SeqScanPlanNode) {
-            SeqScanPlanNode seqScanPlan = (SeqScanPlanNode) plan;
-            return new SeqScanExecutor(bufferPoolManager, seqScanPlan.getTableInfo());
+        if (plan instanceof SeqScanPlanNode seqScanPlan) {
+            TableHeap tableHeap = new TableHeap(bufferPoolManager, seqScanPlan.getTableInfo(), logManager);
+            return new SeqScanExecutor(tableHeap);
         }
-        if (plan instanceof FilterPlanNode) {
-            FilterPlanNode filterPlan = (FilterPlanNode) plan;
-            TupleIterator childExecutor = buildExecutorTree(filterPlan.getChild());
+
+        // --- 修正点 1 ---
+        // 将 plan 转换为 FilterPlanNode 类型的变量 filterPlan
+        if (plan instanceof FilterPlanNode filterPlan) {
+            TupleIterator childExecutor = buildExecutorTree(filterPlan.getChild(), txn);
             AbstractPredicate predicate = createPredicateFromAst(filterPlan.getPredicate(), filterPlan.getChild().getOutputSchema());
             return new FilterExecutor(childExecutor, predicate);
         }
-        if (plan instanceof ProjectPlanNode) {
-            ProjectPlanNode projectPlan = (ProjectPlanNode) plan;
-            TupleIterator childExecutor = buildExecutorTree(projectPlan.getChild());
-            
-            // 计算需要投影的列在子执行器输出中的索引
+
+        // --- 修正点 2 ---
+        // 将 plan 转换为 ProjectPlanNode 类型的变量 projectPlan
+        if (plan instanceof ProjectPlanNode projectPlan) {
+            TupleIterator childExecutor = buildExecutorTree(projectPlan.getChild(), txn);
             List<Integer> columnIndexes = new ArrayList<>();
             Schema childSchema = projectPlan.getChild().getOutputSchema();
-            Schema projectedSchema = projectPlan.getOutputSchema();
-            
-            for(String projectedColName : projectedSchema.getColumns().stream().map(c -> c.getName()).collect(Collectors.toList())) {
-                 for(int i=0; i<childSchema.getColumns().size(); i++){
-                     if(childSchema.getColumns().get(i).getName().equalsIgnoreCase(projectedColName)){
-                         columnIndexes.add(i);
-                         break;
-                     }
-                 }
+            for(String colName : projectPlan.getOutputSchema().getColumns().stream().map(c -> c.getName()).collect(Collectors.toList())) {
+                for(int i = 0; i < childSchema.getColumns().size(); i++) {
+                    if(childSchema.getColumns().get(i).getName().equalsIgnoreCase(colName)) {
+                        columnIndexes.add(i);
+                        break;
+                    }
+                }
             }
             return new ProjectExecutor(childExecutor, columnIndexes);
         }
-         if (plan instanceof DeletePlanNode) {
-            DeletePlanNode deletePlan = (DeletePlanNode) plan;
-            TupleIterator childPlan = buildExecutorTree(deletePlan.getChild());
-            TableHeap tableHeap = new TableHeap(bufferPoolManager, deletePlan.getTableInfo());
-            return new DeleteExecutor(childPlan, tableHeap);
+
+        // --- 修正点 3 ---
+        // 将 plan 转换为 DeletePlanNode 类型的变量 deletePlan
+        if (plan instanceof DeletePlanNode deletePlan) {
+            TupleIterator childPlan = buildExecutorTree(deletePlan.getChild(), txn);
+            TableHeap tableHeap = new TableHeap(bufferPoolManager, deletePlan.getTableInfo(), logManager);
+            return new DeleteExecutor(childPlan, tableHeap, txn);
         }
 
-        if (plan instanceof UpdatePlanNode) {
-            UpdatePlanNode updatePlan = (UpdatePlanNode) plan;
-            TupleIterator childPlan = buildExecutorTree(updatePlan.getChild());
-            TableHeap tableHeap = new TableHeap(bufferPoolManager, updatePlan.getTableInfo());
-            return new UpdateExecutor(childPlan, tableHeap, updatePlan.getTableInfo().getSchema(), updatePlan.getSetClauses());
+        // --- 修正点 4 ---
+        // 将 plan 转换为 UpdatePlanNode 类型的变量 updatePlan
+        if (plan instanceof UpdatePlanNode updatePlan) {
+            TupleIterator childPlan = buildExecutorTree(updatePlan.getChild(), txn);
+            TableHeap tableHeap = new TableHeap(bufferPoolManager, updatePlan.getTableInfo(), logManager);
+            return new UpdateExecutor(childPlan, tableHeap, updatePlan.getTableInfo().getSchema(), updatePlan.getSetClauses(), txn);
         }
-
 
         throw new UnsupportedOperationException("Unsupported plan node: " + plan.getClass().getSimpleName());
     }
 
-    // --- 辅助方法 (从QueryProcessor迁移并改进) ---
     private AbstractPredicate createPredicateFromAst(ExpressionNode expression, Schema schema) {
         if (expression instanceof BinaryExpressionNode node) {
             if (!(node.left() instanceof IdentifierNode) || !(node.right() instanceof LiteralNode)) {
