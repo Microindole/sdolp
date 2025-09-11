@@ -123,7 +123,7 @@ public class ExecutionEngine {
                 throw new UnsupportedOperationException("WHERE clause only supports 'column_name op literal' format.");
             }
 
-            String columnName = ((IdentifierNode) node.left()).name();
+            String columnName = ((IdentifierNode) node.left()).getName();
             int columnIndex = getColumnIndex(schema, columnName);
             Value literalValue = getLiteralValue((LiteralNode) node.right());
 

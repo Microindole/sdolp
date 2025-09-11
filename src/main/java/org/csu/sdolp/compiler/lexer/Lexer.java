@@ -110,6 +110,7 @@ public class Lexer {
                 return consumeAndReturn(TokenType.RPAREN, ")");
             case '*':
                 return consumeAndReturn(TokenType.ASTERISK, "*");
+            case '.': return consumeAndReturn(TokenType.DOT, ".");
             case '>':
                 if (peekNext() == '=') {
                     advance(); // consume '='

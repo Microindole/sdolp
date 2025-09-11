@@ -122,40 +122,34 @@ public class Parser {
     private SelectStatementNode parseSelectStatement() {
         List<ExpressionNode> selectList = new ArrayList<>();
         boolean isSelectAll = false;
-
         if (match(TokenType.ASTERISK)) {
             isSelectAll = true;
         } else {
             if (!check(TokenType.FROM)) {
                 do {
+                    // select list 也需要支持 table.column ***
                     selectList.add(parsePrimaryExpression());
                 } while (match(TokenType.COMMA));
             }
         }
-
         consume(TokenType.FROM, "'FROM' keyword");
         Token tableNameToken = consume(TokenType.IDENTIFIER, "table name");
         IdentifierNode fromTable = new IdentifierNode(tableNameToken.lexeme());
-
         ExpressionNode whereClause = null;
         if (match(TokenType.WHERE)) {
             whereClause = parseExpression();
         }
-        // ====== 新增 (Phase 1) ======
         OrderByClauseNode orderByClause = null;
         if (match(TokenType.ORDER)) {
             orderByClause = parseOrderByClause();
         }
-
         LimitClauseNode limitClause = null;
         if (match(TokenType.LIMIT)) {
             limitClause = parseLimitClause();
         }
-        // ============================
-
         return new SelectStatementNode(selectList, fromTable, whereClause, isSelectAll, orderByClause, limitClause);
     }
-    // ====== 新增：INSERT 语句解析方法 ======
+    // ====== INSERT 语句解析方法 ======
     private InsertStatementNode parseInsertStatement() {
         consume(TokenType.INTO, "'INTO' keyword");
         Token tableNameToken = consume(TokenType.IDENTIFIER, "table name");
@@ -223,13 +217,16 @@ public class Parser {
 
         return new UpdateStatementNode(tableName, setClauses, whereClause);
     }
-    // ====== 新增解析方法 (Phase 1) ======
+    // ====== 解析方法 (Phase 1) ======
     private OrderByClauseNode parseOrderByClause() {
         consume(TokenType.BY, "'BY' after 'ORDER'");
-        Token columnToken = consume(TokenType.IDENTIFIER, "column name for ordering");
-        IdentifierNode column = new IdentifierNode(columnToken.lexeme());
-
-        boolean isAscending = true; // 默认为升序
+        // *** 修改点: ORDER BY 的列也可能是 table.column ***
+        ExpressionNode columnExpr = parsePrimaryExpression();
+        if (!(columnExpr instanceof IdentifierNode)) {
+            throw new ParseException("Expected a column identifier for ORDER BY clause.");
+        }
+        IdentifierNode column = (IdentifierNode) columnExpr;
+        boolean isAscending = true;
         if (match(TokenType.ASC)) {
             isAscending = true;
         } else if (match(TokenType.DESC)) {
@@ -284,14 +281,30 @@ public class Parser {
         }
         return left;
     }
-    // ====== 修改：增强主表达式解析以支持列名 ======
+    // ====== 增强主表达式解析以支持列名 ======
     private ExpressionNode parsePrimaryExpression() {
         if (match(TokenType.INTEGER_CONST, TokenType.STRING_CONST)) {
             return new LiteralNode(previous());
         }
-        if (match(TokenType.IDENTIFIER)) {
-            return new IdentifierNode(previous().lexeme());
+
+        if (check(TokenType.IDENTIFIER)) {
+            Token firstIdentifier = advance();
+            // 预读 (lookahead): 检查下一个 token 是否是点号
+            if (match(TokenType.DOT)) {
+                Token secondIdentifier = consume(TokenType.IDENTIFIER, "column name after '.'");
+                // 解析为 table.column 格式
+                return new IdentifierNode(firstIdentifier.lexeme(), secondIdentifier.lexeme());
+            }
+            // 如果不是点号，则是一个简单的标识符
+            return new IdentifierNode(firstIdentifier.lexeme());
         }
+
+        if (match(TokenType.LPAREN)) {
+            ExpressionNode expr = parseExpression();
+            consume(TokenType.RPAREN, "')' after expression.");
+            return expr;
+        }
+
         throw new ParseException(peek(), "an expression (a literal or an identifier)");
     }
     // --- 辅助方法 ---
