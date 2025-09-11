@@ -5,6 +5,7 @@ import org.csu.sdolp.transaction.log.LogManager;
 import org.csu.sdolp.transaction.log.LogRecord;
 
 import java.io.IOException;
+import java.util.ArrayList;
 
 public class TransactionManager {
     private final LockManager lockManager;
@@ -36,9 +37,10 @@ public class TransactionManager {
         logManager.flush();
 
         // 释放该事务所持有的所有锁
-        for (Integer pageIdNum : txn.getLockedPageIds()) {
+        for (Integer pageIdNum : new ArrayList<>(txn.getLockedPageIds())) {
             lockManager.unlock(txn, new PageId(pageIdNum));
         }
+
         txn.setState(Transaction.State.COMMITTED);
         System.out.println("Transaction " + txn.getTransactionId() + " committed.");
     }
@@ -55,7 +57,7 @@ public class TransactionManager {
         txn.setPrevLSN(lsn);
 
         // 释放所有锁
-        for (Integer pageIdNum : txn.getLockedPageIds()) {
+        for (Integer pageIdNum : new ArrayList<>(txn.getLockedPageIds())) {
             lockManager.unlock(txn, new PageId(pageIdNum));
         }
         txn.setState(Transaction.State.ABORTED);

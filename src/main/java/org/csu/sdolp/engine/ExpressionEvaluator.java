@@ -24,41 +24,32 @@ public class ExpressionEvaluator {
      */
     public static boolean evaluate(ExpressionNode expression, Schema schema, Tuple tuple) {
         if (expression instanceof BinaryExpressionNode node) {
-            // 目前我们只处理 "列名 op 字面量" 形式的二元表达式
-            if (!(node.left() instanceof IdentifierNode) || !(node.right() instanceof LiteralNode)) {
-                throw new UnsupportedOperationException("WHERE clause only supports 'column_name op literal' format.");
+            if (node.left() instanceof IdentifierNode leftCol && node.right() instanceof IdentifierNode rightCol) {
+                Value leftValue = getColumnValue(tuple, schema, leftCol);
+                Value rightValue = getColumnValue(tuple, schema, rightCol);
+                return compareValues(leftValue, rightValue, node.operator().type().name());
             }
 
-            IdentifierNode columnNode = (IdentifierNode) node.left();
-            LiteralNode literalNode = (LiteralNode) node.right();
+            if (node.left() instanceof IdentifierNode columnNode && node.right() instanceof LiteralNode literalNode) {
+                Value tupleValue = getColumnValue(tuple, schema, columnNode);
+                Value literalValue = getLiteralValue(literalNode);
+                return compareValues(tupleValue, literalValue, node.operator().type().name());
+            }
 
-            // 1. 从元组中获取列的实际值
-            Value tupleValue = getColumnValue(tuple, schema, columnNode.getName());
-
-            // 2. 从AST中获取字面量的值
-            Value literalValue = getLiteralValue(literalNode);
-
-            // 3. 比较两个值
-            return compareValues(tupleValue, literalValue, node.operator().type().name());
+            throw new UnsupportedOperationException("Expression format not supported. Must be 'column op literal' or 'column1 op column2'.");
         }
-        throw new UnsupportedOperationException("Unsupported expression type in WHERE clause.");
+        throw new UnsupportedOperationException("Unsupported expression type in WHERE or ON clause.");
     }
 
-    private static Value getColumnValue(Tuple tuple, Schema schema, String columnName) {
-        int columnIndex = -1;
+    private static Value getColumnValue(Tuple tuple, Schema schema, IdentifierNode columnNode) {
+        String columnName = columnNode.getName();
         for (int i = 0; i < schema.getColumns().size(); i++) {
             if (schema.getColumns().get(i).getName().equalsIgnoreCase(columnName)) {
-                columnIndex = i;
-                break;
+                return tuple.getValues().get(i);
             }
         }
-        if (columnIndex == -1) {
-            // 这在语义分析阶段就应该被捕获，但作为防御性编程，我们还是检查一下
-            throw new IllegalStateException("Column '" + columnName + "' not found in schema.");
-        }
-        return tuple.getValues().get(columnIndex);
+        throw new IllegalStateException("Column '" + columnName + "' not found in tuple schema. This should have been caught during semantic analysis.");
     }
-
     private static Value getLiteralValue(LiteralNode literalNode) {
         String lexeme = literalNode.literal().lexeme();
         return switch (literalNode.literal().type()) {
@@ -67,15 +58,15 @@ public class ExpressionEvaluator {
             default -> throw new IllegalStateException("Unsupported literal type in expression.");
         };
     }
-
     private static boolean compareValues(Value val1, Value val2, String operator) {
-        // 类型检查
+        if (val1 == null || val1.getValue() == null || val2 == null || val2.getValue() == null) {
+            // SQL 中，任何与 NULL 的比较结果都是 UNKNOWN，在这里我们将其视为 false
+            return false;
+        }
         if (val1.getType() != val2.getType()) {
-            // 允许不同数值类型比较，但此处简化，要求类型完全一致
             return false;
         }
 
-        // 使用 Comparable 接口进行比较
         Comparable v1 = (Comparable) val1.getValue();
         Comparable v2 = (Comparable) val2.getValue();
         int cmp = v1.compareTo(v2);

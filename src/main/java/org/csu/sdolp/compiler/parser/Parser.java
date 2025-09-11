@@ -143,6 +143,15 @@ public class Parser {
         consume(TokenType.FROM, "'FROM' keyword");
         IdentifierNode fromTable = new IdentifierNode(consume(TokenType.IDENTIFIER, "table name").lexeme());
 
+        // --- 新增 JOIN 解析逻辑 ---
+        IdentifierNode joinTable = null;
+        ExpressionNode joinCondition = null;
+        if (match(TokenType.JOIN)) {
+            joinTable = new IdentifierNode(consume(TokenType.IDENTIFIER, "table name after JOIN").lexeme());
+            consume(TokenType.ON, "'ON' keyword after JOIN table");
+            joinCondition = parseExpression();
+        }
+
         ExpressionNode whereClause = null;
         if (match(TokenType.WHERE)) {
             whereClause = parseExpression();
@@ -172,8 +181,10 @@ public class Parser {
             limitClause = parseLimitClause();
         }
 
-        return new SelectStatementNode(selectList, fromTable, whereClause, isSelectAll, groupByClause, orderByClause, limitClause);
+        return new SelectStatementNode(selectList, fromTable, joinTable, joinCondition,whereClause, isSelectAll, groupByClause, orderByClause, limitClause);
     }
+
+
     // ====== INSERT 语句解析方法 ======
     private InsertStatementNode parseInsertStatement() {
         consume(TokenType.INTO, "'INTO' keyword");
