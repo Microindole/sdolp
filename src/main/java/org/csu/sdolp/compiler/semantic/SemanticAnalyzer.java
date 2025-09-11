@@ -47,22 +47,22 @@ public class SemanticAnalyzer {
     }
 
     private void analyzeCreateTable(CreateTableStatementNode node) {
-        String tableName = node.tableName().name();
+        String tableName = node.tableName().getName();
         if (catalog.getTable(tableName) != null) {
             throw new SemanticException("Table '" + tableName + "' already exists.");
         }
         // 检查数据类型是否合法
         for (ColumnDefinitionNode colDef : node.columns()) {
             try {
-                DataType.valueOf(colDef.dataType().name().toUpperCase());
+                DataType.valueOf(colDef.dataType().getName().toUpperCase());
             } catch (IllegalArgumentException e) {
-                throw new SemanticException("Invalid data type '" + colDef.dataType().name() + "' for column '" + colDef.columnName().name() + "'.");
+                throw new SemanticException("Invalid data type '" + colDef.dataType().getName() + "' for column '" + colDef.columnName().getName() + "'.");
             }
         }
     }
 
     private void analyzeInsert(InsertStatementNode node) {
-        String tableName = node.tableName().name();
+        String tableName = node.tableName().getName();
         TableInfo tableInfo = getTableOrThrow(tableName);
         Schema schema = tableInfo.getSchema();
 
@@ -72,7 +72,7 @@ public class SemanticAnalyzer {
 
         // 检查插入的列是否存在，以及值类型是否匹配
         for (int i = 0; i < node.columns().size(); i++) {
-            String colName = node.columns().get(i).name();
+            String colName = node.columns().get(i).getName();
             Column schemaCol = schema.getColumns().stream()
                     .filter(c -> c.getName().equalsIgnoreCase(colName))
                     .findFirst()
@@ -93,14 +93,15 @@ public class SemanticAnalyzer {
     }
 
     private void analyzeSelect(SelectStatementNode node) {
-        String tableName = node.fromTable().name();
+        String tableName = node.fromTable().getName();
         TableInfo tableInfo = getTableOrThrow(tableName);
 
         // 如果不是 SELECT *，则检查每一列是否存在
         if (!node.isSelectAll()) {
             for (ExpressionNode expr : node.selectList()) {
-                if (expr instanceof IdentifierNode) {
-                    checkColumnExists(tableInfo, ((IdentifierNode) expr).name());
+                if (expr instanceof IdentifierNode idNode) {
+                    // *** 修改点: 检查带限定符的列 ***
+                    checkColumnExists(tableInfo, idNode);
                 }
             }
         }
@@ -111,15 +112,15 @@ public class SemanticAnalyzer {
         }
         // 检查 ORDER BY 子句
         if (node.orderByClause() != null) {
-            String colName = node.orderByClause().column().name();
-            checkColumnExists(tableInfo, colName);
+            // *** 修改点: 检查带限定符的列 ***
+            checkColumnExists(tableInfo, node.orderByClause().column());
         }
         // LIMIT 子句的值在语法分析时已确认为整数，无需额外语义检查。
         // ============================
     }
 
     private void analyzeDelete(DeleteStatementNode node) {
-        String tableName = node.tableName().name();
+        String tableName = node.tableName().getName();
         TableInfo tableInfo = getTableOrThrow(tableName);
 
         // 检查 WHERE 子句
@@ -129,25 +130,21 @@ public class SemanticAnalyzer {
     }
 
     private void analyzeUpdate(UpdateStatementNode node) {
-        String tableName = node.tableName().name();
+        String tableName = node.tableName().getName();
         TableInfo tableInfo = getTableOrThrow(tableName);
 
-        // 检查 SET 子句中的列是否存在，并进行类型检查
         for (SetClauseNode clause : node.setClauses()) {
-            Column column = checkColumnExists(tableInfo, clause.column().name());
+            // *** 修改点: 检查带限定符的列 ***
+            Column column = checkColumnExists(tableInfo, clause.column());
             DataType expectedType = column.getType();
-
-            if (!(clause.value() instanceof LiteralNode)) {
+            if (!(clause.value() instanceof LiteralNode literal)) {
                 throw new SemanticException("SET clause currently only supports literal values.");
             }
-            DataType actualType = getLiteralType((LiteralNode) clause.value());
-
+            DataType actualType = getLiteralType(literal);
             if (expectedType != actualType) {
                 throw new SemanticException("Data type mismatch for column '" + column.getName() + "'. Expected " + expectedType + " but got " + actualType + ".");
             }
         }
-
-        // 检查 WHERE 子句
         if (node.whereClause() != null) {
             analyzeExpression(node.whereClause(), tableInfo);
         }
@@ -155,15 +152,15 @@ public class SemanticAnalyzer {
 
     private void analyzeDropTable(DropTableStatementNode node) {
         // 检查要删除的表是否存在
-        getTableOrThrow(node.tableName().name());
+        getTableOrThrow(node.tableName().getName());
     }
 
     private void analyzeAlterTable(AlterTableStatementNode node) {
-        String tableName = node.tableName().name();
+        String tableName = node.tableName().getName();
         TableInfo tableInfo = getTableOrThrow(tableName);
 
         // 检查要添加的列名是否已存在
-        String newColumnName = node.newColumnDefinition().columnName().name();
+        String newColumnName = node.newColumnDefinition().columnName().getName();
         boolean columnExists = tableInfo.getSchema().getColumns().stream()
                 .anyMatch(c -> c.getName().equalsIgnoreCase(newColumnName));
         if (columnExists) {
@@ -172,43 +169,36 @@ public class SemanticAnalyzer {
 
         // 检查新列的数据类型是否合法
         try {
-            DataType.valueOf(node.newColumnDefinition().dataType().name().toUpperCase());
+            DataType.valueOf(node.newColumnDefinition().dataType().getName().toUpperCase());
         } catch (IllegalArgumentException e) {
-            throw new SemanticException("Invalid data type '" + node.newColumnDefinition().dataType().name() + "' for new column.");
+            throw new SemanticException("Invalid data type '" + node.newColumnDefinition().dataType().getName() + "' for new column.");
         }
     }
     private void analyzeExpression(ExpressionNode expr, TableInfo tableInfo) {
         if (expr instanceof BinaryExpressionNode binaryExpr) {
             TokenType opType = binaryExpr.operator().type();
-
-            // 如果是逻辑运算符，则递归分析左右子表达式
             if (opType == TokenType.AND || opType == TokenType.OR) {
                 analyzeExpression(binaryExpr.left(), tableInfo);
                 analyzeExpression(binaryExpr.right(), tableInfo);
-                return; // 逻辑运算符本身无需进一步检查
+                return;
             }
 
-            // 如果是比较运算符，则检查操作数
-            if (!(binaryExpr.left() instanceof IdentifierNode)) {
+            if (!(binaryExpr.left() instanceof IdentifierNode colNode)) {
                 throw new SemanticException("WHERE clause must have a column name on the left side of the operator.");
             }
-            if (!(binaryExpr.right() instanceof LiteralNode)) {
+            if (!(binaryExpr.right() instanceof LiteralNode literalNode)) {
                 throw new SemanticException("WHERE clause must have a literal value on the right side of the operator.");
             }
 
-            IdentifierNode colNode = (IdentifierNode) binaryExpr.left();
-            LiteralNode literalNode = (LiteralNode) binaryExpr.right();
-
-            Column column = checkColumnExists(tableInfo, colNode.name());
+            // *** 修改点: 检查带限定符的列 ***
+            Column column = checkColumnExists(tableInfo, colNode);
 
             DataType expectedType = column.getType();
             DataType actualType = getLiteralType(literalNode);
             if(expectedType != actualType) {
-                throw new SemanticException("Data type mismatch in WHERE clause for column '" + colNode.name() + "'. Expected " + expectedType + " but got " + actualType + ".");
+                throw new SemanticException("Data type mismatch in WHERE clause for column '" + colNode.getFullName() + "'. Expected " + expectedType + " but got " + actualType + ".");
             }
-        } else if (expr instanceof IdentifierNode || expr instanceof LiteralNode) {
-            // 单独的标识符或字面量在WHERE子句中是无效的，但此处暂不处理
-        } else {
+        } else if (!(expr instanceof IdentifierNode || expr instanceof LiteralNode)) {
             throw new SemanticException("Unsupported expression type in WHERE clause: " + expr.getClass().getSimpleName());
         }
     }
@@ -223,11 +213,21 @@ public class SemanticAnalyzer {
         return tableInfo;
     }
 
-    private Column checkColumnExists(TableInfo tableInfo, String columnName) {
+    private Column checkColumnExists(TableInfo tableInfo, IdentifierNode columnIdentifier) {
+        String tableName = tableInfo.getTableName();
+        String columnName = columnIdentifier.getName();
+        String qualifier = columnIdentifier.getTableQualifier();
+
+        // 检查表限定符是否匹配
+        if (qualifier != null && !qualifier.equalsIgnoreCase(tableName)) {
+            throw new SemanticException("Table qualifier '" + qualifier + "' does not match the table '" + tableName + "' in FROM clause.");
+        }
+
+        // 在表的 Schema 中查找列
         return tableInfo.getSchema().getColumns().stream()
                 .filter(c -> c.getName().equalsIgnoreCase(columnName))
                 .findFirst()
-                .orElseThrow(() -> new SemanticException("Column '" + columnName + "' not found in table '" + tableInfo.getTableName() + "'."));
+                .orElseThrow(() -> new SemanticException("Column '" + columnName + "' not found in table '" + tableName + "'."));
     }
 
     private DataType getLiteralType(LiteralNode literal) {

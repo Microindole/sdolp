@@ -38,12 +38,12 @@ public class ParserTest {
         StatementNode node = parseSql(sql);
         assertTrue("AST node should be an instance of CreateTableStatementNode", node instanceof CreateTableStatementNode);
         CreateTableStatementNode createTableNode = (CreateTableStatementNode) node;
-        assertEquals("users", createTableNode.tableName().name());
+        assertEquals("users", createTableNode.tableName().getName());
         assertEquals(2, createTableNode.columns().size());
-        assertEquals("id", createTableNode.columns().get(0).columnName().name());
-        assertEquals("INT", createTableNode.columns().get(0).dataType().name());
-        assertEquals("name", createTableNode.columns().get(1).columnName().name());
-        assertEquals("VARCHAR", createTableNode.columns().get(1).dataType().name());
+        assertEquals("id", createTableNode.columns().get(0).columnName().getName());
+        assertEquals("INT", createTableNode.columns().get(0).dataType().getName());
+        assertEquals("name", createTableNode.columns().get(1).columnName().getName());
+        assertEquals("VARCHAR", createTableNode.columns().get(1).dataType().getName());
         System.out.println("Result: Test PASSED.\n");
     }
 
@@ -54,10 +54,10 @@ public class ParserTest {
         StatementNode node = parseSql(sql);
         assertTrue("AST node should be an instance of SelectStatementNode", node instanceof SelectStatementNode);
         SelectStatementNode selectNode = (SelectStatementNode) node;
-        assertEquals("customers", selectNode.fromTable().name());
+        assertEquals("customers", selectNode.fromTable().getName());
         assertEquals(2, selectNode.selectList().size());
-        assertEquals("id", ((IdentifierNode) selectNode.selectList().get(0)).name());
-        assertEquals("name", ((IdentifierNode) selectNode.selectList().get(1)).name());
+        assertEquals("id", ((IdentifierNode) selectNode.selectList().get(0)).getName());
+        assertEquals("name", ((IdentifierNode) selectNode.selectList().get(1)).getName());
         System.out.println("Result: Test PASSED.\n");
     }
 
@@ -70,10 +70,10 @@ public class ParserTest {
         assertTrue(node instanceof InsertStatementNode);
 
         InsertStatementNode insertNode = (InsertStatementNode) node;
-        assertEquals("users", insertNode.tableName().name());
+        assertEquals("users", insertNode.tableName().getName());
         assertEquals(2, insertNode.columns().size());
-        assertEquals("id", insertNode.columns().get(0).name());
-        assertEquals("name", insertNode.columns().get(1).name());
+        assertEquals("id", insertNode.columns().get(0).getName());
+        assertEquals("name", insertNode.columns().get(1).getName());
         assertEquals(2, insertNode.values().size());
         assertTrue(insertNode.values().get(0) instanceof LiteralNode);
         assertTrue(insertNode.values().get(1) instanceof LiteralNode);
@@ -90,7 +90,7 @@ public class ParserTest {
         assertTrue(node instanceof DeleteStatementNode);
 
         DeleteStatementNode deleteNode = (DeleteStatementNode) node;
-        assertEquals("users", deleteNode.tableName().name());
+        assertEquals("users", deleteNode.tableName().getName());
         assertNotNull("WHERE clause should not be null", deleteNode.whereClause());
         assertTrue(deleteNode.whereClause() instanceof BinaryExpressionNode);
         System.out.println("Result: Test PASSED.\n");
@@ -104,7 +104,7 @@ public class ParserTest {
         assertTrue(node instanceof DeleteStatementNode);
 
         DeleteStatementNode deleteNode = (DeleteStatementNode) node;
-        assertEquals("users", deleteNode.tableName().name());
+        assertEquals("users", deleteNode.tableName().getName());
         assertNull("WHERE clause should be null", deleteNode.whereClause());
         System.out.println("Result: Test PASSED.\n");
     }
@@ -119,7 +119,7 @@ public class ParserTest {
         assertTrue(node instanceof SelectStatementNode);
 
         SelectStatementNode selectNode = (SelectStatementNode) node;
-        assertEquals("students", selectNode.fromTable().name());
+        assertEquals("students", selectNode.fromTable().getName());
         assertNotNull("WHERE clause should not be null", selectNode.whereClause());
         assertFalse(selectNode.isSelectAll());
         System.out.println("Result: Test PASSED.\n");
@@ -134,12 +134,36 @@ public class ParserTest {
 
         SelectStatementNode selectNode = (SelectStatementNode) node;
         assertTrue("isSelectAll should be true", selectNode.isSelectAll());
-        assertEquals("products", selectNode.fromTable().name());
+        assertEquals("products", selectNode.fromTable().getName());
         assertNull("WHERE clause should be null", selectNode.whereClause());
         System.out.println("Result: Test PASSED.\n");
     }
     // ==========================================
+    // ====== 新增测试 (Dot Notation) ======
+    @Test
+    public void testParseQualifiedColumnName() {
+        System.out.println("--- Running test: testParseQualifiedColumnName ---");
+        String sql = "SELECT users.id FROM users WHERE users.name = 'Alice';";
+        StatementNode node = parseSql(sql);
+        assertTrue(node instanceof SelectStatementNode);
 
+        SelectStatementNode selectNode = (SelectStatementNode) node;
+
+        // 验证 SELECT list
+        assertEquals(1, selectNode.selectList().size());
+        IdentifierNode selectColumn = (IdentifierNode) selectNode.selectList().get(0);
+        assertEquals("users", selectColumn.getTableQualifier());
+        assertEquals("id", selectColumn.getName());
+
+        // 验证 WHERE clause
+        assertTrue(selectNode.whereClause() instanceof BinaryExpressionNode);
+        BinaryExpressionNode whereExpr = (BinaryExpressionNode) selectNode.whereClause();
+        IdentifierNode whereColumn = (IdentifierNode) whereExpr.left();
+        assertEquals("users", whereColumn.getTableQualifier());
+        assertEquals("name", whereColumn.getName());
+
+        System.out.println("Result: Test PASSED.\n");
+    }
     @Test(expected = ParseException.class)
     public void testInvalidSyntax_MissingSemicolon() {
 //        String sql = "SELECT name FROM products";

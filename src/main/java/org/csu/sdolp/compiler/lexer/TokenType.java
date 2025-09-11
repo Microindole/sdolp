@@ -61,6 +61,7 @@ public enum TokenType {
     SEMICOLON,  // ;
     LPAREN,     // (
     RPAREN,     // )
+    DOT,        // .
 
     // ---- 特殊 Token ----
     EOF,        // End-Of-File，表示输入流结束

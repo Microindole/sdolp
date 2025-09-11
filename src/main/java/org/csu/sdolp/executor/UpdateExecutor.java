@@ -58,7 +58,7 @@ public class UpdateExecutor implements TupleIterator {
         for (Tuple oldTuple : tuplesToUpdate) {
             List<Value> newValues = new ArrayList<>(oldTuple.getValues());
             for (SetClauseNode clause : setClauses) {
-                String colName = clause.column().name();
+                String colName = clause.column().getName();
                 int colIndex = getColumnIndex(schema, colName);
                 Value newValue = getLiteralValue((LiteralNode) clause.value());
                 newValues.set(colIndex, newValue);

@@ -42,7 +42,7 @@ public class SortExecutor implements TupleIterator {
 
         // 2. 确定排序列的索引
         Schema childSchema = plan.getChild().getOutputSchema();
-        String colName = plan.getOrderBy().column().name();
+        String colName = plan.getOrderBy().column().getName();
         int colIndex = -1;
         for (int i = 0; i < childSchema.getColumns().size(); i++) {
             if (childSchema.getColumns().get(i).getName().equalsIgnoreCase(colName)) {

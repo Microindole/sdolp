@@ -54,18 +54,18 @@ public class Planner {
     }
 
     private PlanNode createTablePlan(CreateTableStatementNode ast) {
-        String tableName = ast.tableName().name();
+        String tableName = ast.tableName().getName();
         List<Column> columns = ast.columns().stream()
                 .map(colDef -> new Column(
-                        colDef.columnName().name(),
-                        DataType.valueOf(colDef.dataType().name().toUpperCase())))
+                        colDef.columnName().getName(),
+                        DataType.valueOf(colDef.dataType().getName().toUpperCase())))
                 .collect(Collectors.toList());
         Schema schema = new Schema(columns);
         return new CreateTablePlanNode(tableName, schema);
     }
 
     private PlanNode createInsertPlan(InsertStatementNode ast) {
-        TableInfo tableInfo = catalog.getTable(ast.tableName().name());
+        TableInfo tableInfo = catalog.getTable(ast.tableName().getName());
         List<Value> values = new ArrayList<>();
         for (ExpressionNode expr : ast.values()) {
             if (expr instanceof LiteralNode literal) {
@@ -82,7 +82,7 @@ public class Planner {
 
     private PlanNode createSelectPlan(SelectStatementNode ast) {
         // 1. FROM 子句 -> SeqScan
-        TableInfo tableInfo = catalog.getTable(ast.fromTable().name());
+        TableInfo tableInfo = catalog.getTable(ast.fromTable().getName());
         PlanNode plan = new SeqScanPlanNode(tableInfo);
 
         // 2. WHERE 子句 -> Filter
@@ -102,7 +102,7 @@ public class Planner {
                 if (expr instanceof IdentifierNode idNode) {
                     // 从表的原始 Schema 中找到对应的列
                     Column originalColumn = tableInfo.getSchema().getColumns().stream()
-                            .filter(c -> c.getName().equalsIgnoreCase(idNode.name()))
+                            .filter(c -> c.getName().equalsIgnoreCase(idNode.getName()))
                             .findFirst().orElseThrow(); // 语义分析已保证列存在
                     projectedColumns.add(originalColumn);
                 }
@@ -123,7 +123,7 @@ public class Planner {
     }
 
     private PlanNode createDeletePlan(DeleteStatementNode ast) {
-        TableInfo tableInfo = catalog.getTable(ast.tableName().name());
+        TableInfo tableInfo = catalog.getTable(ast.tableName().getName());
         // 1. 创建一个子计划来找到所有要删除的元组
         PlanNode childPlan = new SeqScanPlanNode(tableInfo);
         if (ast.whereClause() != null) {
@@ -134,7 +134,7 @@ public class Planner {
     }
 
     private PlanNode createUpdatePlan(UpdateStatementNode ast) {
-        TableInfo tableInfo = catalog.getTable(ast.tableName().name());
+        TableInfo tableInfo = catalog.getTable(ast.tableName().getName());
         // 1. 创建一个子计划来找到所有要更新的元组
         PlanNode childPlan = new SeqScanPlanNode(tableInfo);
         if (ast.whereClause() != null) {
@@ -144,15 +144,15 @@ public class Planner {
         return new UpdatePlanNode(childPlan, tableInfo, ast.setClauses());
     }
     private PlanNode createDropTablePlan(DropTableStatementNode ast) {
-        return new DropTablePlanNode(ast.tableName().name());
+        return new DropTablePlanNode(ast.tableName().getName());
     }
 
     private PlanNode createAlterTablePlan(AlterTableStatementNode ast) {
         ColumnDefinitionNode colDef = ast.newColumnDefinition();
         Column newColumn = new Column(
-                colDef.columnName().name(),
-                DataType.valueOf(colDef.dataType().name().toUpperCase())
+                colDef.columnName().getName(),
+                DataType.valueOf(colDef.dataType().getName().toUpperCase())
         );
-        return new AlterTablePlanNode(ast.tableName().name(), newColumn);
+        return new AlterTablePlanNode(ast.tableName().getName(), newColumn);
     }
 }

@@ -33,7 +33,7 @@ public class ExpressionEvaluator {
             LiteralNode literalNode = (LiteralNode) node.right();
 
             // 1. 从元组中获取列的实际值
-            Value tupleValue = getColumnValue(tuple, schema, columnNode.name());
+            Value tupleValue = getColumnValue(tuple, schema, columnNode.getName());
 
             // 2. 从AST中获取字面量的值
             Value literalValue = getLiteralValue(literalNode);
