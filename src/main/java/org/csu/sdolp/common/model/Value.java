@@ -4,6 +4,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 
 /**
  * 表示一个具体的值，可以是不同数据类型。
@@ -21,7 +22,12 @@ public class Value {
         this.type = DataType.VARCHAR;
         this.value = value;
     }
-
+    // ======(Phase 4 Bug Fix) ======
+    // 私有构造函数，用于特殊情况，如 AVG 的中间值
+    private Value(DataType type, Object value) {
+        this.type = type;
+        this.value = value;
+    }
     public DataType getType() {
         return type;
     }
@@ -73,5 +79,20 @@ public class Value {
     @Override
     public String toString() {
         return value.toString();
+    }
+
+    // ====== 核心修复点 (Phase 4 Bug Fix) ======
+    // 重写 equals 和 hashCode 是让其在 HashMap 中作为 Key 的关键
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Value value1 = (Value) o;
+        return type == value1.type && Objects.equals(value, value1.value);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(type, value);
     }
 }

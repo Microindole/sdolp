@@ -16,6 +16,7 @@ public record SelectStatementNode(
         IdentifierNode fromTable,
         ExpressionNode whereClause,
         boolean isSelectAll,
+        List<IdentifierNode> groupByClause,
         OrderByClauseNode orderByClause,
         LimitClauseNode limitClause
 ) implements StatementNode {

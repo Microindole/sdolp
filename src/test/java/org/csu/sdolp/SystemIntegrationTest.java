@@ -151,4 +151,27 @@ public class SystemIntegrationTest {
         // 这条查询将验证CREATE TABLE和INSERT操作是否都已持久化
         queryProcessor.execute("SELECT * FROM persistent_table WHERE id = 999;");
     }
+    @Test
+    void testAggregationAndGroupByFlow() {
+        System.out.println("\n--- Test: Aggregation and Group By ---");
+        queryProcessor.execute("CREATE TABLE sales (product VARCHAR, region VARCHAR, amount INT);");
+        queryProcessor.execute("INSERT INTO sales (product, region, amount) VALUES ('A', 'East', 100);");
+        queryProcessor.execute("INSERT INTO sales (product, region, amount) VALUES ('B', 'West', 250);");
+        queryProcessor.execute("INSERT INTO sales (product, region, amount) VALUES ('A', 'East', 150);");
+        queryProcessor.execute("INSERT INTO sales (product, region, amount) VALUES ('A', 'West', 200);");
+        queryProcessor.execute("INSERT INTO sales (product, region, amount) VALUES ('B', 'East', 300);");
+        queryProcessor.execute("INSERT INTO sales (product, region, amount) VALUES ('B', 'West', 50);");
+
+        System.out.println("\n--- Simple Aggregation: Total sales amount ---");
+        System.out.println("--- Expected: SUM(amount) = 1050 ---");
+        queryProcessor.execute("SELECT SUM(amount) FROM sales;");
+
+        System.out.println("\n--- Aggregation with GROUP BY: Total sales per region ---");
+        System.out.println("--- Expected: East=550, West=500 ---");
+        queryProcessor.execute("SELECT region, SUM(amount) FROM sales GROUP BY region;");
+
+        System.out.println("\n--- Aggregation with GROUP BY: Count of sales per product ---");
+        System.out.println("--- Expected: A=3, B=3 ---");
+        queryProcessor.execute("SELECT product, COUNT(*) FROM sales GROUP BY product;");
+    }
 }

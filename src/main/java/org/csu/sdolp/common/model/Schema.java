@@ -48,4 +48,31 @@ public class Schema {
         }
         return new Schema(columns);
     }
+    /**
+     * 新增方法：根据列名获取列对象（忽略大小写）。
+     * @param columnName 要查找的列名
+     * @return 匹配的 Column 对象
+     * @throws IllegalArgumentException 如果找不到对应的列
+     */
+    public Column getColumn(String columnName) {
+        return columns.stream()
+                .filter(c -> c.getName().equalsIgnoreCase(columnName))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Column '" + columnName + "' not found in schema."));
+    }
+    /**
+     * 新增方法：根据列名获取其索引（忽略大小写）。
+     * @param columnName 要查找的列名
+     * @return 列的索引 (从0开始)
+     * @throws IllegalArgumentException 如果找不到对应的列
+     */
+    public int getColumnIndex(String columnName) {
+        for (int i = 0; i < columns.size(); i++) {
+            if (columns.get(i).getName().equalsIgnoreCase(columnName)) {
+                return i;
+            }
+        }
+        throw new IllegalArgumentException("Column '" + columnName + "' not found in schema.");
+    }
+
 }

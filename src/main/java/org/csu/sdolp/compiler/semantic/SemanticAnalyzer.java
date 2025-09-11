@@ -10,7 +10,9 @@ import org.csu.sdolp.compiler.lexer.TokenType;
 import org.csu.sdolp.compiler.parser.ast.*;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -92,31 +94,57 @@ public class SemanticAnalyzer {
         }
     }
 
+    // ====== (Phase 4) ======
     private void analyzeSelect(SelectStatementNode node) {
         String tableName = node.fromTable().getName();
         TableInfo tableInfo = getTableOrThrow(tableName);
 
-        // 如果不是 SELECT *，则检查每一列是否存在
-        if (!node.isSelectAll()) {
-            for (ExpressionNode expr : node.selectList()) {
-                if (expr instanceof IdentifierNode idNode) {
-                    // *** 修改点: 检查带限定符的列 ***
-                    checkColumnExists(tableInfo, idNode);
-                }
+        // --- 检查 GROUP BY 子句 (必须在检查 SELECT list 之前) ---
+        Set<String> groupByColumnNames = new HashSet<>();
+        if (node.groupByClause() != null) {
+            for (IdentifierNode groupByColumn : node.groupByClause()) {
+                checkColumnExists(tableInfo, groupByColumn);
+                groupByColumnNames.add(groupByColumn.getName().toLowerCase());
             }
         }
 
-        // 检查 WHERE 子句
+        // --- 检查 SELECT list ---
+        if (!node.isSelectAll()) {
+            for (ExpressionNode expr : node.selectList()) {
+                if (expr instanceof IdentifierNode idNode) {
+                    checkColumnExists(tableInfo, idNode);
+                    // 如果有 GROUP BY，那么普通列必须是分组键的一部分
+                    if (!groupByColumnNames.isEmpty() && !groupByColumnNames.contains(idNode.getName().toLowerCase())) {
+                        throw new SemanticException("Column '" + idNode.getFullName() + "' must appear in the GROUP BY clause or be used in an aggregate function.");
+                    }
+                } else if (expr instanceof AggregateExpressionNode aggNode) {
+                    // 检查聚合函数的参数
+                    if (!aggNode.isStar()) {
+                        if (aggNode.argument() instanceof IdentifierNode argId) {
+                            checkColumnExists(tableInfo, argId);
+                        } else {
+                            throw new SemanticException("Aggregate function argument must be a column identifier.");
+                        }
+                    } else {
+                        // COUNT(*) 的特殊情况检查
+                        if (!aggNode.functionName().equalsIgnoreCase("COUNT")) {
+                            throw new SemanticException("The '*' argument is only valid for the COUNT function.");
+                        }
+                    }
+                }
+            }
+        } else if (!groupByColumnNames.isEmpty()) {
+            // 如果是 SELECT * 但有 GROUP BY，这是不合法的 (标准SQL)
+            throw new SemanticException("SELECT * is not allowed with GROUP BY clause.");
+        }
+
+        // --- 其他检查保持不变 ---
         if (node.whereClause() != null) {
             analyzeExpression(node.whereClause(), tableInfo);
         }
-        // 检查 ORDER BY 子句
         if (node.orderByClause() != null) {
-            // *** 修改点: 检查带限定符的列 ***
             checkColumnExists(tableInfo, node.orderByClause().column());
         }
-        // LIMIT 子句的值在语法分析时已确认为整数，无需额外语义检查。
-        // ============================
     }
 
     private void analyzeDelete(DeleteStatementNode node) {

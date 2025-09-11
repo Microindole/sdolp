@@ -80,45 +80,65 @@ public class Planner {
         return new InsertPlanNode(tableInfo, List.of(tuple));
     }
 
+    // ====== (Phase 4) ======
     private PlanNode createSelectPlan(SelectStatementNode ast) {
-        // 1. FROM 子句 -> SeqScan
         TableInfo tableInfo = catalog.getTable(ast.fromTable().getName());
         PlanNode plan = new SeqScanPlanNode(tableInfo);
 
-        // 2. WHERE 子句 -> Filter
         if (ast.whereClause() != null) {
             plan = new FilterPlanNode(plan, ast.whereClause());
         }
 
-        // 3. SELECT 子句 -> Project
-        if (ast.isSelectAll()) {
-            // SELECT * 的情况，输出 Schema 就是表的原始 Schema
-            // 所以 SeqScan 或 Filter 的输出 Schema 已经是正确的，无需再加 ProjectNode
-            return plan;
-        } else {
-            // 构造投影后的 Schema
-            List<Column> projectedColumns = new ArrayList<>();
-            for (ExpressionNode expr : ast.selectList()) {
-                if (expr instanceof IdentifierNode idNode) {
-                    // 从表的原始 Schema 中找到对应的列
-                    Column originalColumn = tableInfo.getSchema().getColumns().stream()
-                            .filter(c -> c.getName().equalsIgnoreCase(idNode.getName()))
-                            .findFirst().orElseThrow(); // 语义分析已保证列存在
-                    projectedColumns.add(originalColumn);
+        // --- 聚合和分组逻辑 ---
+        boolean hasGroupBy = ast.groupByClause() != null && !ast.groupByClause().isEmpty();
+        List<AggregateExpressionNode> aggregates = ast.selectList().stream()
+                .filter(AggregateExpressionNode.class::isInstance)
+                .map(AggregateExpressionNode.class::cast)
+                .collect(Collectors.toList());
+        boolean hasAggregate = !aggregates.isEmpty();
+
+        if (hasGroupBy || hasAggregate) {
+            // 构造聚合后的 Schema
+            List<Column> outputColumns = new ArrayList<>();
+            if (hasGroupBy) {
+                for (IdentifierNode groupByColId : ast.groupByClause()) {
+                    Column originalCol = tableInfo.getSchema().getColumn(groupByColId.getName());
+                    outputColumns.add(new Column(originalCol.getName(), originalCol.getType()));
                 }
             }
-            Schema projectedSchema = new Schema(projectedColumns);
-            plan = new ProjectPlanNode(plan, projectedSchema);
+            for (AggregateExpressionNode agg : aggregates) {
+                // 聚合结果通常是 INT 或 DECIMAL，这里简化为INT
+                outputColumns.add(new Column(agg.functionName(), DataType.INT));
+            }
+            Schema aggSchema = new Schema(outputColumns);
+
+            plan = new AggregatePlanNode(plan, ast.groupByClause(), aggregates, aggSchema);
         }
-        // 4. ORDER BY 子句 -> Sort
+
+        // --- 投影逻辑 ---
+        if (!hasGroupBy && !hasAggregate) { // 只有在非聚合查询中才应用原始投影逻辑
+            if (ast.isSelectAll()) {
+                // SELECT * 不需要 ProjectNode
+            } else {
+                List<Column> projectedColumns = new ArrayList<>();
+                for (ExpressionNode expr : ast.selectList()) {
+                    if (expr instanceof IdentifierNode idNode) {
+                        Column originalColumn = tableInfo.getSchema().getColumn(idNode.getName());
+                        projectedColumns.add(originalColumn);
+                    }
+                }
+                plan = new ProjectPlanNode(plan, new Schema(projectedColumns));
+            }
+        }
+
         if (ast.orderByClause() != null) {
             plan = new SortPlanNode(plan, ast.orderByClause());
         }
 
-        // 5. LIMIT 子句 -> Limit
         if (ast.limitClause() != null) {
             plan = new LimitPlanNode(plan, ast.limitClause().limit());
         }
+
         return plan;
     }
 
