@@ -7,6 +7,7 @@ import org.csu.sdolp.compiler.parser.ast.*;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * @author hidyouth
@@ -17,6 +18,11 @@ public class Parser {
 
     private final List<Token> tokens;
     private int position = 0;
+
+    // ======(Phase 4) ======
+    private static final Set<TokenType> AGGREGATE_FUNCTIONS = Set.of(
+            TokenType.COUNT, TokenType.SUM, TokenType.AVG, TokenType.MIN, TokenType.MAX
+    );
 
     public Parser(List<Token> tokens) {
         this.tokens = tokens;
@@ -122,32 +128,51 @@ public class Parser {
     private SelectStatementNode parseSelectStatement() {
         List<ExpressionNode> selectList = new ArrayList<>();
         boolean isSelectAll = false;
+
         if (match(TokenType.ASTERISK)) {
             isSelectAll = true;
         } else {
             if (!check(TokenType.FROM)) {
                 do {
-                    // select list 也需要支持 table.column ***
-                    selectList.add(parsePrimaryExpression());
+                    // select list 现在可以包含聚合函数或列名
+                    selectList.add(parseExpression());
                 } while (match(TokenType.COMMA));
             }
         }
+
         consume(TokenType.FROM, "'FROM' keyword");
-        Token tableNameToken = consume(TokenType.IDENTIFIER, "table name");
-        IdentifierNode fromTable = new IdentifierNode(tableNameToken.lexeme());
+        IdentifierNode fromTable = new IdentifierNode(consume(TokenType.IDENTIFIER, "table name").lexeme());
+
         ExpressionNode whereClause = null;
         if (match(TokenType.WHERE)) {
             whereClause = parseExpression();
         }
+
+        // --- 新增 GROUP BY 解析 ---
+        List<IdentifierNode> groupByClause = null;
+        if (match(TokenType.GROUP)) {
+            consume(TokenType.BY, "'BY' after 'GROUP'");
+            groupByClause = new ArrayList<>();
+            do {
+                ExpressionNode groupByExpr = parsePrimaryExpression();
+                if (!(groupByExpr instanceof IdentifierNode)) {
+                    throw new ParseException("GROUP BY clause only supports column identifiers.");
+                }
+                groupByClause.add((IdentifierNode) groupByExpr);
+            } while (match(TokenType.COMMA));
+        }
+
         OrderByClauseNode orderByClause = null;
         if (match(TokenType.ORDER)) {
             orderByClause = parseOrderByClause();
         }
+
         LimitClauseNode limitClause = null;
         if (match(TokenType.LIMIT)) {
             limitClause = parseLimitClause();
         }
-        return new SelectStatementNode(selectList, fromTable, whereClause, isSelectAll, orderByClause, limitClause);
+
+        return new SelectStatementNode(selectList, fromTable, whereClause, isSelectAll, groupByClause, orderByClause, limitClause);
     }
     // ====== INSERT 语句解析方法 ======
     private InsertStatementNode parseInsertStatement() {
@@ -287,15 +312,18 @@ public class Parser {
             return new LiteralNode(previous());
         }
 
+        // --- 聚合函数解析 ---
+        // 使用 Set.contains() 检查当前 token 类型是否在集合中
+        if (AGGREGATE_FUNCTIONS.contains(peek().type())) {
+            return parseAggregateExpression();
+        }
+
         if (check(TokenType.IDENTIFIER)) {
             Token firstIdentifier = advance();
-            // 预读 (lookahead): 检查下一个 token 是否是点号
             if (match(TokenType.DOT)) {
                 Token secondIdentifier = consume(TokenType.IDENTIFIER, "column name after '.'");
-                // 解析为 table.column 格式
                 return new IdentifierNode(firstIdentifier.lexeme(), secondIdentifier.lexeme());
             }
-            // 如果不是点号，则是一个简单的标识符
             return new IdentifierNode(firstIdentifier.lexeme());
         }
 
@@ -305,7 +333,25 @@ public class Parser {
             return expr;
         }
 
-        throw new ParseException(peek(), "an expression (a literal or an identifier)");
+        throw new ParseException(peek(), "an expression (a literal, an identifier, or an aggregate function)");
+    }
+    private AggregateExpressionNode parseAggregateExpression() {
+        Token functionToken = advance(); // 消费掉 COUNT, SUM 等
+        String functionName = functionToken.lexeme().toUpperCase();
+
+        consume(TokenType.LPAREN, "'(' after aggregate function name");
+
+        boolean isStar = false;
+        ExpressionNode argument = null;
+        if (match(TokenType.ASTERISK)) {
+            isStar = true;
+        } else {
+            argument = parsePrimaryExpression();
+        }
+
+        consume(TokenType.RPAREN, "')' after aggregate function argument");
+
+        return new AggregateExpressionNode(functionName, argument, isStar);
     }
     // --- 辅助方法 ---
     private boolean match(TokenType... types) {

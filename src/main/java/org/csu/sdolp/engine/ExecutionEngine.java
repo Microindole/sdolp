@@ -105,7 +105,11 @@ public class ExecutionEngine {
             // *** 核心修复点 3：为 DDL 执行器传入 txn 和 logManager ***
             return new AlterTableExecutor(alterPlan, catalog, txn, logManager);
         }
-
+        // ======  (Phase 4) ======
+        if (plan instanceof AggregatePlanNode aggPlan) {
+            TupleIterator childExecutor = buildExecutorTree(aggPlan.getChild(), txn);
+            return new AggregateExecutor(childExecutor, aggPlan);
+        }
         throw new UnsupportedOperationException("Unsupported plan node: " + plan.getClass().getSimpleName());
     }
     private AbstractPredicate createPredicateFromAst(ExpressionNode expression, Schema schema) {
