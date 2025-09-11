@@ -2,6 +2,7 @@ package org.csu.sdolp.transaction;
 
 import org.csu.sdolp.catalog.Catalog;
 import org.csu.sdolp.catalog.TableInfo;
+import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.executor.TableHeap;
 import org.csu.sdolp.storage.buffer.BufferPoolManager;
@@ -75,7 +76,7 @@ public class RecoveryManager {
                 } else {
                     // 1. 生成并写入补偿日志
                     LogRecord clr = generateCompensationLog(logToUndo);
-                    long clrLsn = logManager.appendLogRecord(clr);
+                    logManager.appendLogRecord(clr);
 
                     // 2. 执行物理撤销
                     applyUndo(logToUndo);
@@ -99,14 +100,22 @@ public class RecoveryManager {
         // DML 操作需要一个临时的事务对象
         Transaction fakeTxn = new Transaction(log.getTransactionId());
 
-        // DDL 操作直接作用于 Catalog
+
         switch (log.getLogType()) {
+            // 类型 1: 事务控制日志，在 Redo/Undo 阶段无需物理操作，直接跳过
+            case BEGIN:
+            case COMMIT:
+            case ABORT:
+            case CLR:
+                return;
+            // 类型 2: DDL 日志
             case CREATE_TABLE:
                 if (!isUndo && catalog.getTable(log.getTableName()) == null) {
                     catalog.createTable(log.getTableName(), log.getSchema());
                 } else if (isUndo && catalog.getTable(log.getTableName()) != null) {
                     catalog.dropTable(log.getTableName());
-                } return;
+                }
+                return;
             case DROP_TABLE:
                 if (!isUndo && catalog.getTable(log.getTableName()) != null) {
                     catalog.dropTable(log.getTableName());
@@ -117,31 +126,45 @@ public class RecoveryManager {
                 if (!isUndo) {
                     catalog.addColumn(log.getTableName(), log.getNewColumn());
                 } return;
-        }
-
-        // DML 操作
-        TableInfo tableInfo = catalog.getTableByTuple(log.getTuple() != null ? log.getTuple() : log.getOldTuple());
-        if (tableInfo == null) {
-            System.err.println("WARN: Table for tuple not found during recovery, skipping log LSN=" + log.getLsn());
-            return;
-        }
-        TableHeap tableHeap = new TableHeap(bufferPoolManager, tableInfo, logManager, lockManager);
-
-        switch (log.getLogType()) {
+            // 类型 3: DML 日志，现在可以安全地假设 log.getTableName() 不为 null
             case INSERT:
-                // Redo: 插入元组. Undo: 删除元组.
-                if (!isUndo) tableHeap.insertTuple(log.getTuple(), fakeTxn, false);
-                else tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
-                break;
             case DELETE:
-                // Redo: 删除元组. Undo: 插入被删除的元组.
-                if (!isUndo) tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
-                else tableHeap.insertTuple(log.getTuple(), fakeTxn, false);
-                break;
             case UPDATE:
-                // Redo: 更新为新元组. Undo: 更新回旧元组.
-                Tuple tupleToApply = isUndo ? log.getOldTuple() : log.getNewTuple();
-                tableHeap.updateTuple(tupleToApply, log.getRid(), fakeTxn, false);
+                TableInfo tableInfo = catalog.getTable(log.getTableName());
+                if (tableInfo == null) {
+                    System.err.println("WARN: Table '" + log.getTableName() + "' not found for DML op during recovery, skipping LSN=" + log.getLsn());
+                    return;
+                }
+                Schema schema = tableInfo.getSchema();
+                TableHeap tableHeap = new TableHeap(bufferPoolManager, tableInfo, logManager, lockManager);
+
+                switch (log.getLogType()) {
+                    case INSERT:
+                        if (isUndo) {
+                            tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
+                        } else {
+                            Tuple tuple = Tuple.fromBytes(log.getTupleBytes(), schema);
+                            // *** 核心修复：调用4参数版本，传入 acquireLock=false ***
+                            tableHeap.insertTuple(tuple, fakeTxn, false, false);
+                        }
+                        break;
+                    case DELETE:
+                        if (isUndo) {
+                            Tuple deletedTuple = Tuple.fromBytes(log.getTupleBytes(), schema);
+                            deletedTuple.setRid(log.getRid());
+                            // *** 核心修复：调用4参数版本，传入 acquireLock=false ***
+                            tableHeap.insertTuple(deletedTuple, fakeTxn, false, false);
+                        } else {
+                            tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
+                        }
+                        break;
+                    case UPDATE:
+                        Tuple oldTuple = Tuple.fromBytes(log.getOldTupleBytes(), schema);
+                        Tuple newTuple = Tuple.fromBytes(log.getNewTupleBytes(), schema);
+                        Tuple tupleToApply = isUndo ? oldTuple : newTuple;
+                        tableHeap.updateTuple(tupleToApply, log.getRid(), fakeTxn, false);
+                        break;
+                }
                 break;
         }
     }

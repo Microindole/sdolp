@@ -184,6 +184,27 @@ public class Page {
         return true;
     }
 
+    /**
+     * 撤销对一个元组的删除标记。
+     * 这是 markTupleAsDeleted 的逆操作。
+     * @param slotIndex 槽位号
+     * @return 如果成功撤销返回 true
+     */
+    public boolean undoMarkTupleAsDeleted(int slotIndex) {
+        if (slotIndex >= getNumTuples()) {
+            return false;
+        }
+        int length = getTupleLength(slotIndex);
+        // 只有当长度为负（即被标记为删除时），才执行操作
+        if (length < 0) {
+            // 将长度取绝对值，恢复为正数
+            setTupleLength(slotIndex, -length);
+            return true;
+        }
+        // 如果元组本来就不是删除状态，则什么都不做
+        return false;
+    }
+
 
 
 

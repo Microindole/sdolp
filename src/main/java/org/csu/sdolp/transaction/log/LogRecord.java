@@ -38,25 +38,32 @@ public class LogRecord {
     // --- Payload for CLR ---
     private long undoNextLSN;
 
+    // 这些字段在恢复模式下（Schema为null时）被填充
+    private byte[] tupleBytes;
+    private byte[] oldTupleBytes;
+    private byte[] newTupleBytes;
+
     // DDL 日志通常记录逻辑信息而非物理元组
     private String tableName;
     private Schema schema; // 用于 CREATE_TABLE
     private Column newColumn; // 用于 ALTER_TABLE
 
     // 构造函数 for INSERT/DELETE
-    public LogRecord(int transactionId, long prevLSN, LogType logType, RID rid, Tuple tuple) {
+    public LogRecord(int transactionId, long prevLSN, LogType logType, String tableName, RID rid, Tuple tuple) {
         this.transactionId = transactionId;
         this.prevLSN = prevLSN;
         this.logType = logType;
+        this.tableName = tableName;
         this.rid = rid;
         this.tuple = tuple;
     }
 
     // 构造函数 for UPDATE
-    public LogRecord(int transactionId, long prevLSN, LogType logType, RID rid, Tuple oldTuple, Tuple newTuple) {
+    public LogRecord(int transactionId, long prevLSN, LogType logType, String tableName, RID rid, Tuple oldTuple, Tuple newTuple) {
         this.transactionId = transactionId;
         this.prevLSN = prevLSN;
         this.logType = logType;
+        this.tableName = tableName;
         this.rid = rid;
         this.oldTuple = oldTuple;
         this.newTuple = newTuple;
@@ -111,30 +118,30 @@ public class LogRecord {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         DataOutputStream dos = new DataOutputStream(baos);
         try {
-            // 写入Header (除了总长度)
             dos.writeLong(lsn);
             dos.writeInt(transactionId);
             dos.writeLong(prevLSN);
             dos.writeInt(logType.ordinal());
 
-            // 根据类型写入Payload
             switch (logType) {
                 case INSERT, DELETE -> {
+                    dos.writeUTF(tableName);
                     dos.writeInt(rid.pageNum());
                     dos.writeInt(rid.slotIndex());
-                    byte[] tupleBytes = tuple.toBytes();
-                    dos.writeInt(tupleBytes.length);
-                    dos.write(tupleBytes);
+                    byte[] tupleData = tuple.toBytes();
+                    dos.writeInt(tupleData.length);
+                    dos.write(tupleData);
                 }
                 case UPDATE -> {
+                    dos.writeUTF(tableName);
                     dos.writeInt(rid.pageNum());
                     dos.writeInt(rid.slotIndex());
-                    byte[] oldTupleBytes = oldTuple.toBytes();
-                    dos.writeInt(oldTupleBytes.length);
-                    dos.write(oldTupleBytes);
-                    byte[] newTupleBytes = newTuple.toBytes();
-                    dos.writeInt(newTupleBytes.length);
-                    dos.write(newTupleBytes);
+                    byte[] oldTupleData = oldTuple.toBytes();
+                    dos.writeInt(oldTupleData.length);
+                    dos.write(oldTupleData);
+                    byte[] newTupleData = newTuple.toBytes();
+                    dos.writeInt(newTupleData.length);
+                    dos.write(newTupleData);
                 }
                 case CREATE_TABLE -> {
                     dos.writeUTF(tableName);
@@ -151,7 +158,7 @@ public class LogRecord {
 
             byte[] recordData = baos.toByteArray();
             ByteBuffer buffer = ByteBuffer.allocate(4 + recordData.length);
-            buffer.putInt(4 + recordData.length); // 写入记录总长度
+            buffer.putInt(4 + recordData.length);
             buffer.put(recordData);
             return buffer.array();
         } catch (IOException e) {
@@ -176,25 +183,32 @@ public class LogRecord {
 
             switch (record.logType) {
                 case INSERT, DELETE -> {
+                    record.tableName = dis.readUTF();
                     record.rid = new RID(dis.readInt(), dis.readInt());
                     int tupleLen = dis.readInt();
-                    byte[] tupleBytes = new byte[tupleLen];
-                    dis.readFully(tupleBytes);
+                    // *** 核心修复: 无论 schema 是否为 null，都保存原始字节 ***
+                    record.tupleBytes = new byte[tupleLen];
+                    dis.readFully(record.tupleBytes);
                     if (tableSchema != null) {
-                        record.tuple = Tuple.fromBytes(tupleBytes, tableSchema);
+                        record.tuple = Tuple.fromBytes(record.tupleBytes, tableSchema);
                     }
                 }
                 case UPDATE -> {
+                    record.tableName = dis.readUTF();
                     record.rid = new RID(dis.readInt(), dis.readInt());
                     int oldTupleLen = dis.readInt();
-                    byte[] oldTupleBytes = new byte[oldTupleLen];
-                    dis.readFully(oldTupleBytes);
+                    // *** 核心修复: 保存 oldTuple 的原始字节 ***
+                    record.oldTupleBytes = new byte[oldTupleLen];
+                    dis.readFully(record.oldTupleBytes);
+
                     int newTupleLen = dis.readInt();
-                    byte[] newTupleBytes = new byte[newTupleLen];
-                    dis.readFully(newTupleBytes);
+                    // *** 核心修复: 保存 newTuple 的原始字节 ***
+                    record.newTupleBytes = new byte[newTupleLen];
+                    dis.readFully(record.newTupleBytes);
+
                     if (tableSchema != null) {
-                        record.oldTuple = Tuple.fromBytes(oldTupleBytes, tableSchema);
-                        record.newTuple = Tuple.fromBytes(newTupleBytes, tableSchema);
+                        record.oldTuple = Tuple.fromBytes(record.oldTupleBytes, tableSchema);
+                        record.newTuple = Tuple.fromBytes(record.newTupleBytes, tableSchema);
                     }
                 }
                 case CREATE_TABLE -> {

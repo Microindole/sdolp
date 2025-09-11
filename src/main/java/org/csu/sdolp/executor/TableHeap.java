@@ -1,3 +1,4 @@
+// src/main/java/org/csu/sdolp/executor/TableHeap.java
 package org.csu.sdolp.executor;
 
 import lombok.Getter;
@@ -15,11 +16,6 @@ import org.csu.sdolp.transaction.log.LogRecord;
 
 import java.io.IOException;
 
-/**
- * TableHeap 负责一张表的物理存储堆，并提供遍历其所有元组的能力。
- * 它封装了页面链表的迭代、元组的插入、删除和更新等底层操作。
- * 这是所有上层执行器的物理数据源。
- */
 public class TableHeap implements TupleIterator {
 
     private final BufferPoolManager bufferPoolManager;
@@ -29,6 +25,7 @@ public class TableHeap implements TupleIterator {
     private final LogManager logManager;
     @Getter
     private final LockManager lockManager;
+    private final TableInfo tableInfo;
 
     // --- 迭代器状态 ---
     private PageId currentPageId;
@@ -38,20 +35,19 @@ public class TableHeap implements TupleIterator {
 
     public TableHeap(BufferPoolManager bufferPoolManager, TableInfo tableInfo, LogManager logManager, LockManager lockManager) {
         this.bufferPoolManager = bufferPoolManager;
+        this.tableInfo = tableInfo;
         this.schema = tableInfo.getSchema();
         this.firstPageId = tableInfo.getFirstPageId();
         this.logManager = logManager;
-        this.lockManager = lockManager; // *** 初始化 ***
+        this.lockManager = lockManager;
     }
 
     public void initIterator(Transaction txn) throws IOException {
         this.iteratorTxn = txn;
         this.currentPageId = this.firstPageId;
         this.currentSlotIndex = 0;
-
         try {
             if (this.currentPageId != null && this.currentPageId.getPageNum() != -1) {
-                // *** 加锁点 1：为读操作获取共享锁 ***
                 lockManager.lockShared(iteratorTxn, currentPageId);
                 this.currentPage = bufferPoolManager.getPage(this.currentPageId);
             } else {
@@ -61,7 +57,6 @@ public class TableHeap implements TupleIterator {
             Thread.currentThread().interrupt();
             throw new IOException("Thread interrupted while acquiring lock", e);
         }
-        this.currentSlotIndex = 0;
     }
 
     @Override
@@ -69,7 +64,6 @@ public class TableHeap implements TupleIterator {
         return this.schema;
     }
 
-    // next() 和 hasNext() 方法保持不变，它们是只读操作
     @Override
     public Tuple next() throws IOException {
         if (!hasNext()) return null;
@@ -95,7 +89,6 @@ public class TableHeap implements TupleIterator {
                 if (nextPageNum != -1) {
                     try {
                         PageId nextPid = new PageId(nextPageNum);
-                        // *** 加锁点 2：切换到下一页时，为新页面加共享锁 ***
                         lockManager.lockShared(iteratorTxn, nextPid);
                         currentPageId = nextPid;
                         currentPage = bufferPoolManager.getPage(currentPageId);
@@ -111,46 +104,48 @@ public class TableHeap implements TupleIterator {
         }
     }
 
+    // **公开给 InsertExecutor 的方法**
     public boolean insertTuple(Tuple tuple, Transaction txn) throws IOException {
-        return insertTuple(tuple, txn, true);
+        // 正常插入总是需要加锁和写日志
+        return insertTuple(tuple, txn, true, true);
     }
-    // 核心修改
-    public boolean insertTuple(Tuple tuple, Transaction txn, boolean writeLog) throws IOException {
+
+    // **公开给 RecoveryManager 的方法**
+    public boolean insertTuple(Tuple tuple, Transaction txn, boolean acquireLock, boolean writeLog) throws IOException {
         try {
-            Page targetPage = findFreePageForInsert(tuple, txn);
+            Page targetPage = findFreePageForInsert(tuple, txn, acquireLock);
             if (targetPage == null) return false;
-            RID rid = new RID(targetPage.getPageId().getPageNum(), targetPage.getNumTuples());
+
+            int slotIndexOfNewTuple = targetPage.getNumTuples();
+            if (!targetPage.insertTuple(tuple)) {
+                return false;
+            }
+            RID rid = new RID(targetPage.getPageId().getPageNum(), slotIndexOfNewTuple);
             tuple.setRid(rid);
 
-            if (writeLog) { // 【新增】只在非恢复模式下写日志
-                LogRecord logRecord = new LogRecord(txn.getTransactionId(), txn.getPrevLSN(), LogRecord.LogType.INSERT, rid, tuple);
+            if (writeLog) {
+                LogRecord logRecord = new LogRecord(txn.getTransactionId(), txn.getPrevLSN(), LogRecord.LogType.INSERT, this.tableInfo.getTableName(), rid, tuple);
                 long lsn = logManager.appendLogRecord(logRecord);
                 txn.setPrevLSN(lsn);
             }
 
-            boolean success = targetPage.insertTuple(tuple);
-            if (success) {
-                bufferPoolManager.flushPage(targetPage.getPageId());
-            }
-            return success;
+            bufferPoolManager.flushPage(targetPage.getPageId());
+            return true;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Thread interrupted while acquiring lock", e);
         }
     }
 
-//    Thread.currentThread().interrupt();
-//            throw new IOException("Thread interrupted while acquiring lock", e);
-
-    private Page findFreePageForInsert(Tuple tuple, Transaction txn) throws IOException, InterruptedException {
+    private Page findFreePageForInsert(Tuple tuple, Transaction txn, boolean acquireLock) throws IOException, InterruptedException {
         byte[] tupleBytes = tuple.toBytes();
         int requiredSpace = tupleBytes.length + 8;
-
         PageId pid = this.firstPageId;
         Page lastPage = null;
-
         while (pid != null && pid.getPageNum() != -1) {
-            lockManager.lockExclusive(txn, pid);
+            if (acquireLock) {
+                lockManager.lockExclusive(txn, pid);
+            }
             Page page = bufferPoolManager.getPage(pid);
             lastPage = page;
             if (page.getFreeSpace() >= requiredSpace) {
@@ -159,13 +154,12 @@ public class TableHeap implements TupleIterator {
             int nextPageNum = page.getNextPageId();
             pid = (nextPageNum != -1) ? new PageId(nextPageNum) : null;
         }
-
         Page newPage = bufferPoolManager.newPage();
         if (newPage == null) return null;
         newPage.init();
-
-        lockManager.lockExclusive(txn, newPage.getPageId());
-
+        if (acquireLock) {
+            lockManager.lockExclusive(txn, newPage.getPageId());
+        }
         if (lastPage != null) {
             lastPage.setNextPageId(newPage.getPageId().getPageNum());
             bufferPoolManager.flushPage(lastPage.getPageId());
@@ -175,19 +169,37 @@ public class TableHeap implements TupleIterator {
         return newPage;
     }
 
+    // --- 核心修改：为 Delete 和 Update 增加重载方法 ---
+
+    // **给普通执行器（如DeleteExecutor）调用的公开方法**
+    public boolean deleteTuple(RID rid, Transaction txn) throws IOException {
+        // 正常操作总是需要加锁和写日志
+        return deleteTuple(rid, txn, true, true);
+    }
+
+    // **给恢复管理器(RecoveryManager)调用的内部版本**
     public boolean deleteTuple(RID rid, Transaction txn, boolean acquireLock) throws IOException {
+        // 恢复操作由RecoveryManager控制，不写新的DML日志
+        return deleteTuple(rid, txn, acquireLock, false);
+    }
+
+    // **包含所有逻辑的私有核心方法**
+    private boolean deleteTuple(RID rid, Transaction txn, boolean acquireLock, boolean writeLog) throws IOException {
         try {
             PageId pageId = new PageId(rid.pageNum());
-            // *** 加锁点 4：为写操作获取排他锁 ***
             if (acquireLock) {
                 lockManager.lockExclusive(txn, pageId);
             }
             Page page = bufferPoolManager.getPage(pageId);
             Tuple oldTuple = page.getTuple(rid.slotIndex(), schema);
             if (oldTuple == null) return false;
-            LogRecord logRecord = new LogRecord(txn.getTransactionId(), txn.getPrevLSN(), LogRecord.LogType.DELETE, rid, oldTuple);
-            long lsn = logManager.appendLogRecord(logRecord);
-            txn.setPrevLSN(lsn);
+
+            if (writeLog) {
+                LogRecord logRecord = new LogRecord(txn.getTransactionId(), txn.getPrevLSN(), LogRecord.LogType.DELETE, this.tableInfo.getTableName(), rid, oldTuple);
+                long lsn = logManager.appendLogRecord(logRecord);
+                txn.setPrevLSN(lsn);
+            }
+
             boolean success = page.markTupleAsDeleted(rid.slotIndex());
             if (success) {
                 bufferPoolManager.flushPage(page.getPageId());
@@ -199,18 +211,23 @@ public class TableHeap implements TupleIterator {
         }
     }
 
+
+    // **给普通执行器（如UpdateExecutor）调用的公开方法**
     public boolean updateTuple(Tuple newTuple, RID rid, Transaction txn) throws IOException {
-        return updateTuple(newTuple, rid, txn, true); // 默认行为是加锁
+        // 正常操作总是需要加锁和写日志
+        return updateTuple(newTuple, rid, txn, true, true);
     }
 
-    public boolean deleteTuple(RID rid, Transaction txn) throws IOException {
-        return deleteTuple(rid, txn, true);
-    }
-
+    // **给恢复管理器(RecoveryManager)调用的内部版本**
     public boolean updateTuple(Tuple newTuple, RID rid, Transaction txn, boolean acquireLock) throws IOException {
+        // 恢复操作由RecoveryManager控制，不写新的DML日志
+        return updateTuple(newTuple, rid, txn, acquireLock, false);
+    }
+
+    // **包含所有逻辑的私有核心方法**
+    private boolean updateTuple(Tuple newTuple, RID rid, Transaction txn, boolean acquireLock, boolean writeLog) throws IOException {
         try {
             PageId pageId = new PageId(rid.pageNum());
-            // *** 加锁点 5：为写操作获取排他锁 ***
             if (acquireLock) {
                 lockManager.lockExclusive(txn, pageId);
             }
@@ -218,54 +235,31 @@ public class TableHeap implements TupleIterator {
             Tuple oldTuple = page.getTuple(rid.slotIndex(), schema);
             if (oldTuple == null) return false;
 
-            LogRecord logRecord = new LogRecord(txn.getTransactionId(), txn.getPrevLSN(), LogRecord.LogType.UPDATE, rid, oldTuple, newTuple);
-            long lsn = logManager.appendLogRecord(logRecord);
-            txn.setPrevLSN(lsn);
-
-            if (page.markTupleAsDeleted(rid.slotIndex())) {
-                if (page.getFreeSpace() >= newTuple.toBytes().length + 8) {
-                    if (page.insertTuple(newTuple)) {
-                        bufferPoolManager.flushPage(page.getPageId());
-                        return true;
-                    }
-                }
-                System.err.println("Update failed: Not enough space on page for in-place update.");
-                return false;
+            if (writeLog) {
+                LogRecord logRecord = new LogRecord(txn.getTransactionId(), txn.getPrevLSN(), LogRecord.LogType.UPDATE, this.tableInfo.getTableName(), rid, oldTuple, newTuple);
+                long lsn = logManager.appendLogRecord(logRecord);
+                txn.setPrevLSN(lsn);
             }
 
+            // 执行物理更新
+            if (page.markTupleAsDeleted(rid.slotIndex())) {
+                // 更新是先删除再插入
+                int newSlotIndex = page.getNumTuples();
+                if(page.insertTuple(newTuple)){
+                    newTuple.setRid(new RID(pageId.getPageNum(), newSlotIndex));
+                    bufferPoolManager.flushPage(page.getPageId());
+                    return true;
+                }
+
+                // 如果插入失败，撤销删除
+                System.err.println("Update failed: Not enough space on page for in-place update.");
+                page.undoMarkTupleAsDeleted(rid.slotIndex());
+                return false;
+            }
             return false;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Thread interrupted while acquiring lock", e);
         }
     }
-
-
-    /**
-     * 根据RID删除一条元组，并遵循WAL协议。
-     * @param rid 要删除元组的物理地址
-     * @param txn 当前事务
-     * @return 删除成功返回 true
-     */
-    public boolean deleteTuple(Tuple newTuple, RID rid, Transaction txn) throws IOException {
-        Page page = bufferPoolManager.getPage(new PageId(rid.pageNum()));
-        Tuple oldTuple = page.getTuple(rid.slotIndex(), schema);
-        if (oldTuple == null) {
-            return false; // 元组不存在或已被删除
-        }
-
-        // 1.【WAL核心】在修改数据页之前，先写入日志记录
-        LogRecord logRecord = new LogRecord(txn.getTransactionId(), txn.getPrevLSN(), LogRecord.LogType.DELETE, rid, oldTuple);
-        long lsn = logManager.appendLogRecord(logRecord);
-        txn.setPrevLSN(lsn);
-
-        // 2.【物理修改】日志写入成功后，再标记元组为已删除
-        boolean success = page.markTupleAsDeleted(rid.slotIndex());
-        if (success) {
-            bufferPoolManager.flushPage(page.getPageId());
-        }
-        return success;
-    }
-
-
 }
