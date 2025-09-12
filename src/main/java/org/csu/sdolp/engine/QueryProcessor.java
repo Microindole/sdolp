@@ -223,4 +223,27 @@ public class QueryProcessor {
         return sb.toString();
     }
 
+    // 在 QueryProcessor.java 中添加这个新的 public 方法
+    public TupleIterator executeMysql(String sql) throws Exception {
+        Transaction txn = transactionManager.begin();
+        try {
+            Lexer lexer = new Lexer(sql);
+            Parser parser = new Parser(lexer.tokenize());
+            StatementNode ast = parser.parse();
+            if (ast == null) {
+                transactionManager.abort(txn);
+                return null;
+            }
+            SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(catalog);
+            semanticAnalyzer.analyze(ast);
+            PlanNode plan = planner.createPlan(ast);
+            TupleIterator iterator = executionEngine.execute(plan, txn);
+            transactionManager.commit(txn);
+            return iterator;
+        } catch (Exception e) {
+            transactionManager.abort(txn);
+            throw e; // 将异常向上抛出，由 Protocol Handler 处理
+        }
+    }
+
 }
