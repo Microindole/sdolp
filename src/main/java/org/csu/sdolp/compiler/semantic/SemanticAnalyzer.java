@@ -44,10 +44,15 @@ public class SemanticAnalyzer {
             analyzeDropTable(dropTable);
         } else if (node instanceof AlterTableStatementNode alterTable) {
             analyzeAlterTable(alterTable);
+        }else if (node instanceof ShowTablesStatementNode) { //
+            analyzeShowTables((ShowTablesStatementNode) node);
         }
         // 可以扩展以支持其他语句类型
     }
-
+    private void analyzeShowTables(ShowTablesStatementNode node) {
+        // SHOW TABLES 语句没有复杂的语义需要检查
+        // 所以这个方法体可以为空
+    }
     private void analyzeCreateTable(CreateTableStatementNode node) {
         String tableName = node.tableName().getName();
         if (catalog.getTable(tableName) != null) {

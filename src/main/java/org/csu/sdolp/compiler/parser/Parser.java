@@ -57,7 +57,9 @@ public class Parser {
             // 如果 CREATE 后面跟的不是 TABLE 或 INDEX，抛出更具体的错误
             throw new ParseException(nextToken, "Expected 'TABLE' or 'INDEX' after 'CREATE'");
         }
-
+        if (match(TokenType.SHOW)) { // <-- 新增
+            return parseShowTablesStatement();
+        }
         if (match(TokenType.SELECT)) {
             return parseSelectStatement();
         }
@@ -76,7 +78,10 @@ public class Parser {
 
         throw new ParseException(peek(), "a valid statement (CREATE, SELECT, INSERT, DELETE, DROP, etc.)");
     }
-
+    private StatementNode parseShowTablesStatement() { //
+        consume(TokenType.TABLES, "Expected 'TABLES' after 'SHOW'");
+        return new ShowTablesStatementNode();
+    }
     private DropTableStatementNode parseDropTableStatement() {
         consume(TokenType.TABLE, "'TABLE' keyword after 'DROP'");
         IdentifierNode tableName = new IdentifierNode(consume(TokenType.IDENTIFIER, "table name").lexeme());

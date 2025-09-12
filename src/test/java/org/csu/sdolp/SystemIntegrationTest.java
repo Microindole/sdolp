@@ -8,6 +8,8 @@ import org.junit.jupiter.api.Test;
 import java.io.File;
 import java.io.IOException;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 端到端的系统集成测试.
  * 测试从SQL字符串到执行结果的全过程，并验证数据持久性。
@@ -134,6 +136,36 @@ public class SystemIntegrationTest {
         // 5. 验证表已被删除（预期会收到 "Table not found" 错误）
         System.out.println("\n--- Verifying table is dropped (expecting an error) ---");
         queryProcessor.execute("SELECT * FROM to_be_modified;");
+    }
+    @Test
+    void testShowTablesFlow() {
+        System.out.println("--- Test: SHOW TABLES ---");
+
+        // 1. Create two tables
+        queryProcessor.execute("CREATE TABLE table_b (id INT);");
+        queryProcessor.execute("CREATE TABLE table_a (id INT);");
+
+        // 2. Execute SHOW TABLES and verify the result
+        System.out.println("\n--- SHOW TABLES after creating two tables ---");
+        String showResult = queryProcessor.executeAndGetResult("SHOW TABLES;");
+        System.out.println(showResult);
+
+        // Assert that the output contains both table names (sorted alphabetically)
+        assertTrue(showResult.contains("table_a"), "SHOW TABLES result should contain 'table_a'");
+        assertTrue(showResult.contains("table_b"), "SHOW TABLES result should contain 'table_b'");
+        assertTrue(showResult.contains("2 rows returned"), "Should indicate 2 rows were returned");
+
+
+        // 3. Drop one table and verify again
+        queryProcessor.execute("DROP TABLE table_a;");
+        System.out.println("\n--- SHOW TABLES after dropping one table ---");
+        String finalShowResult = queryProcessor.executeAndGetResult("SHOW TABLES;");
+        System.out.println(finalShowResult);
+
+        // Assert that the dropped table is gone and the other remains
+        assertFalse(finalShowResult.contains("table_a"), "SHOW TABLES result should no longer contain 'table_a'");
+        assertTrue(finalShowResult.contains("table_b"), "SHOW TABLES result should still contain 'table_b'");
+        assertTrue(finalShowResult.contains("1 rows returned"), "Should indicate 1 row was returned");
     }
     @Test
     void testDataPersistence() throws IOException {
