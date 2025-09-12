@@ -31,6 +31,8 @@ public enum TokenType {
     // ===================================
     AND,        // "AND"
     OR,         // "OR"
+    JOIN,       // “JOIN”
+    ON,         // "ON"
 
     DROP,       // "DROP"
     ALTER,      // "ALTER"

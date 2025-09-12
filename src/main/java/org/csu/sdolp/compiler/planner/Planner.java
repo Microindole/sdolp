@@ -82,15 +82,23 @@ public class Planner {
 
     // ====== (Phase 4) ======
     private PlanNode createSelectPlan(SelectStatementNode ast) {
-        TableInfo tableInfo = catalog.getTable(ast.fromTable().getName());
-        PlanNode plan = new SeqScanPlanNode(tableInfo);
+        TableInfo leftTableInfo = catalog.getTable(ast.fromTable().getName());
+        PlanNode plan = new SeqScanPlanNode(leftTableInfo);
 
+        // 2. 如果有 JOIN，创建 JoinPlanNode
+        if (ast.joinTable() != null) {
+            TableInfo rightTableInfo = catalog.getTable(ast.joinTable().getName());
+            PlanNode rightPlan = new SeqScanPlanNode(rightTableInfo);
+            plan = new JoinPlanNode(plan, rightPlan, ast.joinCondition());
+        }
+
+        // 3. WHERE 子句 -> Filter
         if (ast.whereClause() != null) {
             plan = new FilterPlanNode(plan, ast.whereClause());
         }
 
         // --- 聚合和分组逻辑 ---
-        boolean hasGroupBy = ast.groupByClause() != null && !ast.groupByClause().isEmpty();
+        /*boolean hasGroupBy = ast.groupByClause() != null && !ast.groupByClause().isEmpty();
         List<AggregateExpressionNode> aggregates = ast.selectList().stream()
                 .filter(AggregateExpressionNode.class::isInstance)
                 .map(AggregateExpressionNode.class::cast)
@@ -113,24 +121,31 @@ public class Planner {
             Schema aggSchema = new Schema(outputColumns);
 
             plan = new AggregatePlanNode(plan, ast.groupByClause(), aggregates, aggSchema);
-        }
+        }*/
 
         // --- 投影逻辑 ---
-        if (!hasGroupBy && !hasAggregate) { // 只有在非聚合查询中才应用原始投影逻辑
-            if (ast.isSelectAll()) {
-                // SELECT * 不需要 ProjectNode
-            } else {
-                List<Column> projectedColumns = new ArrayList<>();
-                for (ExpressionNode expr : ast.selectList()) {
-                    if (expr instanceof IdentifierNode idNode) {
-                        Column originalColumn = tableInfo.getSchema().getColumn(idNode.getName());
-                        projectedColumns.add(originalColumn);
-                    }
-                }
-                plan = new ProjectPlanNode(plan, new Schema(projectedColumns));
+        if (!ast.isSelectAll()) {
+            // 【修正点】投影逻辑不应该被 if 包裹，它总是需要执行（除非是 SELECT *）
+            // 从当前 plan (可能是 Scan, Join, 或 Aggregate) 的输出中选择列
+            Schema inputSchemaForProject = plan.getOutputSchema();
+
+            List<Column> projectedColumns = new ArrayList<>();
+            for (ExpressionNode expr : ast.selectList()) {
+                if (expr instanceof IdentifierNode idNode) {
+                    Column originalColumn = findColumnInSchema(inputSchemaForProject, idNode.getName());
+                    projectedColumns.add(originalColumn);
+                    // 假设您有 AggregateExpressionNode
+                } /* else if (expr instanceof AggregateExpressionNode aggNode) {
+                    // 从聚合节点的输出中找到对应的列
+                    Column aggColumn = findColumnInSchema(inputSchemaForProject, aggNode.toString());
+                    projectedColumns.add(aggColumn);
+                }*/
             }
+            Schema projectedSchema = new Schema(projectedColumns);
+            plan = new ProjectPlanNode(plan, projectedSchema);
         }
 
+        // --- 6. 排序和限制 ---
         if (ast.orderByClause() != null) {
             plan = new SortPlanNode(plan, ast.orderByClause());
         }
@@ -141,7 +156,6 @@ public class Planner {
 
         return plan;
     }
-
     private PlanNode createDeletePlan(DeleteStatementNode ast) {
         TableInfo tableInfo = catalog.getTable(ast.tableName().getName());
         // 1. 创建一个子计划来找到所有要删除的元组
@@ -174,5 +188,15 @@ public class Planner {
                 DataType.valueOf(colDef.dataType().getName().toUpperCase())
         );
         return new AlterTablePlanNode(ast.tableName().getName(), newColumn);
+    }
+
+    private Column findColumnInSchema(Schema schema, String columnName) {
+        return schema.getColumns().stream()
+                .filter(c -> c.getName().equalsIgnoreCase(columnName))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException(
+                        "Column '" + columnName + "' not found in plan's output schema. " +
+                                "This should have been caught during semantic analysis."
+                ));
     }
 }

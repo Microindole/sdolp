@@ -91,6 +91,11 @@ public class ExecutionEngine {
             TupleIterator childExecutor = buildExecutorTree(limitPlan.getChild(), txn);
             return new LimitExecutor(childExecutor, limitPlan.getLimit());
         }
+        if (plan instanceof JoinPlanNode joinPlan) {
+            TupleIterator leftExecutor = buildExecutorTree(joinPlan.getLeft(), txn);
+            TupleIterator rightExecutor = buildExecutorTree(joinPlan.getRight(), txn);
+            return new JoinExecutor(joinPlan, leftExecutor, rightExecutor);
+        }
 
         // --- DDL Executors ---
         if (plan instanceof CreateTablePlanNode createTablePlan) {

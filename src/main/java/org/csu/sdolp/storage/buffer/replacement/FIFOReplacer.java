@@ -25,4 +25,9 @@ public class FIFOReplacer implements BufferPoolReplacer {
         // 移除并返回队列头部的页
         return fifoQueue.poll();
     }
+    @Override
+    public void remove(PageId pageId) {
+        fifoQueue.remove(pageId);
+    }
+
 }

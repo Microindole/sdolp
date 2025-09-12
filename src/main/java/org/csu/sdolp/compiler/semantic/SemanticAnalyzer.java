@@ -96,32 +96,37 @@ public class SemanticAnalyzer {
 
     // ====== (Phase 4) ======
     private void analyzeSelect(SelectStatementNode node) {
-        String tableName = node.fromTable().getName();
-        TableInfo tableInfo = getTableOrThrow(tableName);
+        // 1. 检查 FROM 表和 JOIN 表
+        TableInfo leftTableInfo = getTableOrThrow(node.fromTable().getName());
+        TableInfo rightTableInfo = null;
 
-        // --- 检查 GROUP BY 子句 (必须在检查 SELECT list 之前) ---
-        Set<String> groupByColumnNames = new HashSet<>();
-        if (node.groupByClause() != null) {
-            for (IdentifierNode groupByColumn : node.groupByClause()) {
-                checkColumnExists(tableInfo, groupByColumn);
-                groupByColumnNames.add(groupByColumn.getName().toLowerCase());
+        // 如果有 JOIN，检查 JOIN 的表并验证连接条件
+        if (node.joinTable() != null) {
+            rightTableInfo = getTableOrThrow(node.joinTable().getName());
+            if (node.joinCondition() != null) {
+                // 传入两个表的 schema 用于检查 ON 子句中的列
+                analyzeJoinExpression(node.joinCondition(), leftTableInfo, rightTableInfo);
+            } else {
+                throw new SemanticException("JOIN clause requires an ON condition.");
             }
         }
 
-        // --- 检查 SELECT list ---
+        Set<String> groupByColumnNames = new HashSet<>();
         if (!node.isSelectAll()) {
             for (ExpressionNode expr : node.selectList()) {
                 if (expr instanceof IdentifierNode idNode) {
-                    checkColumnExists(tableInfo, idNode);
+                    // **【修正点】** 使用新的辅助方法检查列
+                    checkColumnExistsInJoinedTables(leftTableInfo, rightTableInfo, idNode);
                     // 如果有 GROUP BY，那么普通列必须是分组键的一部分
                     if (!groupByColumnNames.isEmpty() && !groupByColumnNames.contains(idNode.getName().toLowerCase())) {
                         throw new SemanticException("Column '" + idNode.getFullName() + "' must appear in the GROUP BY clause or be used in an aggregate function.");
                     }
-                } else if (expr instanceof AggregateExpressionNode aggNode) {
+                    // 假设您有 AggregateExpressionNode
+                }/* else if (expr instanceof AggregateExpressionNode aggNode) {
                     // 检查聚合函数的参数
                     if (!aggNode.isStar()) {
                         if (aggNode.argument() instanceof IdentifierNode argId) {
-                            checkColumnExists(tableInfo, argId);
+                            checkColumnExistsInJoinedTables(leftTableInfo, rightTableInfo, argId);
                         } else {
                             throw new SemanticException("Aggregate function argument must be a column identifier.");
                         }
@@ -131,21 +136,26 @@ public class SemanticAnalyzer {
                             throw new SemanticException("The '*' argument is only valid for the COUNT function.");
                         }
                     }
-                }
+                }*/
             }
         } else if (!groupByColumnNames.isEmpty()) {
             // 如果是 SELECT * 但有 GROUP BY，这是不合法的 (标准SQL)
             throw new SemanticException("SELECT * is not allowed with GROUP BY clause.");
         }
 
-        // --- 其他检查保持不变 ---
+        // 4. 检查 WHERE 子句
         if (node.whereClause() != null) {
-            analyzeExpression(node.whereClause(), tableInfo);
+            // **【修正点】** 使用能处理两个表的 analyzeWhereOrJoinExpression 方法
+            analyzeWhereOrJoinExpression(node.whereClause(), leftTableInfo, rightTableInfo);
         }
+
+        // 5. 检查 ORDER BY 子句
         if (node.orderByClause() != null) {
-            checkColumnExists(tableInfo, node.orderByClause().column());
+            // **【修正点】** 使用新的辅助方法检查列
+            checkColumnExistsInJoinedTables(leftTableInfo, rightTableInfo, node.orderByClause().column());
         }
     }
+
 
     private void analyzeDelete(DeleteStatementNode node) {
         String tableName = node.tableName().getName();
@@ -203,32 +213,7 @@ public class SemanticAnalyzer {
         }
     }
     private void analyzeExpression(ExpressionNode expr, TableInfo tableInfo) {
-        if (expr instanceof BinaryExpressionNode binaryExpr) {
-            TokenType opType = binaryExpr.operator().type();
-            if (opType == TokenType.AND || opType == TokenType.OR) {
-                analyzeExpression(binaryExpr.left(), tableInfo);
-                analyzeExpression(binaryExpr.right(), tableInfo);
-                return;
-            }
-
-            if (!(binaryExpr.left() instanceof IdentifierNode colNode)) {
-                throw new SemanticException("WHERE clause must have a column name on the left side of the operator.");
-            }
-            if (!(binaryExpr.right() instanceof LiteralNode literalNode)) {
-                throw new SemanticException("WHERE clause must have a literal value on the right side of the operator.");
-            }
-
-            // *** 修改点: 检查带限定符的列 ***
-            Column column = checkColumnExists(tableInfo, colNode);
-
-            DataType expectedType = column.getType();
-            DataType actualType = getLiteralType(literalNode);
-            if(expectedType != actualType) {
-                throw new SemanticException("Data type mismatch in WHERE clause for column '" + colNode.getFullName() + "'. Expected " + expectedType + " but got " + actualType + ".");
-            }
-        } else if (!(expr instanceof IdentifierNode || expr instanceof LiteralNode)) {
-            throw new SemanticException("Unsupported expression type in WHERE clause: " + expr.getClass().getSimpleName());
-        }
+        analyzeWhereOrJoinExpression(expr, tableInfo, null);
     }
 
     // --- 辅助方法 ---
@@ -266,5 +251,81 @@ public class SemanticAnalyzer {
             return DataType.VARCHAR;
         }
         throw new SemanticException("Unsupported literal type: " + literal.literal().type());
+    }
+
+    private void analyzeWhereOrJoinExpression(ExpressionNode expr, TableInfo leftTable, TableInfo rightTable) {
+        if (expr instanceof BinaryExpressionNode binaryExpr) {
+            TokenType opType = binaryExpr.operator().type();
+            // 递归处理 AND/OR
+            if (opType == TokenType.AND || opType == TokenType.OR) {
+                analyzeWhereOrJoinExpression(binaryExpr.left(), leftTable, rightTable);
+                analyzeWhereOrJoinExpression(binaryExpr.right(), leftTable, rightTable);
+                return;
+            }
+
+            // 处理 col op literal (常见于 WHERE)
+            if (binaryExpr.left() instanceof IdentifierNode colNode && binaryExpr.right() instanceof LiteralNode literalNode) {
+                Column column = checkColumnExistsInJoinedTables(leftTable, rightTable, colNode);
+                DataType expectedType = column.getType();
+                DataType actualType = getLiteralType(literalNode);
+                if (expectedType != actualType) {
+                    throw new SemanticException("Data type mismatch for column '" + colNode.getFullName() + "'. Expected " + expectedType + " but got " + actualType + ".");
+                }
+                // 处理 col op col (常见于 JOIN ON)
+            } else if (binaryExpr.left() instanceof IdentifierNode leftCol && binaryExpr.right() instanceof IdentifierNode rightCol) {
+                checkColumnExistsInJoinedTables(leftTable, rightTable, leftCol);
+                checkColumnExistsInJoinedTables(leftTable, rightTable, rightCol);
+            } else {
+                throw new SemanticException("Unsupported expression format in WHERE or ON clause.");
+            }
+        }
+    }
+
+
+    private void analyzeJoinExpression(ExpressionNode expr, TableInfo leftTable, TableInfo rightTable) {
+        if (expr instanceof BinaryExpressionNode binaryExpr) {
+            // 确保是 column = column 的形式
+            if (!(binaryExpr.left() instanceof IdentifierNode) || !(binaryExpr.right() instanceof IdentifierNode)) {
+                throw new SemanticException("JOIN ON condition must be in the format 'table1.column1 = table2.column2'.");
+            }
+            checkColumnExistsInJoinedTables(leftTable, rightTable, (IdentifierNode) binaryExpr.left());
+            checkColumnExistsInJoinedTables(leftTable, rightTable, (IdentifierNode) binaryExpr.right());
+        } else {
+            throw new SemanticException("Unsupported JOIN condition expression.");
+        }
+    }
+
+    private Column checkColumnExistsInJoinedTables(TableInfo left, TableInfo right, IdentifierNode columnIdentifier) {
+        String columnName = columnIdentifier.getName();
+        String qualifier = columnIdentifier.getTableQualifier();
+
+        // 如果有表限定符 (e.g., users.id)
+        if (qualifier != null) {
+            if (qualifier.equalsIgnoreCase(left.getTableName())) {
+                return checkColumnExists(left, columnIdentifier);
+            }
+            if (right != null && qualifier.equalsIgnoreCase(right.getTableName())) {
+                return checkColumnExists(right, columnIdentifier);
+            }
+            throw new SemanticException("Table qualifier '" + qualifier + "' not found in FROM or JOIN clause.");
+        }
+
+        // 如果没有表限定符 (e.g., id)
+        boolean inLeft = left.getSchema().getColumns().stream().anyMatch(c -> c.getName().equalsIgnoreCase(columnName));
+        boolean inRight = right != null && right.getSchema().getColumns().stream().anyMatch(c -> c.getName().equalsIgnoreCase(columnName));
+
+        if (inLeft && inRight) {
+            throw new SemanticException("Column '" + columnName + "' is ambiguous; it exists in both tables. Please use a table qualifier (e.g., '" + left.getTableName() + "." + columnName + "').");
+        }
+
+        if (inLeft) {
+            return checkColumnExists(left, columnIdentifier);
+        }
+
+        if (inRight) {
+            return checkColumnExists(right, columnIdentifier);
+        }
+
+        throw new SemanticException("Column '" + columnName + "' not found in any specified table.");
     }
 }

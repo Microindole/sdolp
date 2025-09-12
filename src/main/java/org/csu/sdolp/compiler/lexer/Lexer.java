@@ -43,6 +43,8 @@ public class Lexer {
         keywords.put("limit", TokenType.LIMIT);
         keywords.put("and", TokenType.AND);
         keywords.put("or", TokenType.OR);
+        keywords.put("join", TokenType.JOIN);
+        keywords.put("on", TokenType.ON);
         keywords.put("drop", TokenType.DROP);
         keywords.put("alter", TokenType.ALTER);
         keywords.put("add", TokenType.ADD);

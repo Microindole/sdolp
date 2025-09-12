@@ -18,4 +18,6 @@ public interface BufferPoolReplacer {
      * @return 可淘汰的页ID，如果没有则返回null。
      */
     PageId unpin();
+
+    void remove(PageId pageId);
 }

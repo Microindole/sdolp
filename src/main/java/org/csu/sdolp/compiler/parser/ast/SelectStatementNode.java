@@ -14,6 +14,8 @@ import java.util.List;
 public record SelectStatementNode(
         List<ExpressionNode> selectList,
         IdentifierNode fromTable,
+        IdentifierNode joinTable,
+        ExpressionNode joinCondition,
         ExpressionNode whereClause,
         boolean isSelectAll,
         List<IdentifierNode> groupByClause,

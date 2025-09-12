@@ -29,4 +29,8 @@ public class LRUReplacer implements BufferPoolReplacer {
         lruMap.remove(firstEntry.getKey());
         return firstEntry.getKey();
     }
+    @Override
+    public synchronized void remove(PageId pageId) {
+        lruMap.remove(pageId);
+    }
 }

@@ -34,7 +34,6 @@ public class QueryProcessor {
     private final Catalog catalog;
     private final Planner planner;
     private final ExecutionEngine executionEngine;
-    // 在 QueryProcessor.java 文件末尾添加
     @Getter
     private final LogManager logManager;
     @Getter
@@ -52,7 +51,6 @@ public class QueryProcessor {
             this.logManager = new LogManager(dbFilePath + ".log");
             this.lockManager = new LockManager();
             this.transactionManager = new TransactionManager(lockManager, logManager);
-            // *** 修改点：将LogManager传入ExecutionEngine ***
             this.executionEngine = new ExecutionEngine(bufferPoolManager, catalog, logManager, lockManager);
         } catch (IOException e) {
             throw new RuntimeException("Failed to initialize database engine", e);
@@ -66,28 +64,18 @@ public class QueryProcessor {
         logManager.close();
     }
 
-    /**
-     * 主执行方法，它会捕获所有异常并将其格式化为错误信息返回。
-     * 它将执行结果或错误信息作为字符串返回。
-     *
-     * @param sql 要执行的SQL语句
-     * @return 包含结果集或错误信息的字符串
-     */
     public String executeAndGetResult(String sql) {
-        Transaction txn = null; // 提前声明
+        Transaction txn = null;
         try {
-
-            // === 测试代码 ===
             if (sql.trim().equalsIgnoreCase("CRASH_NOW;")) {
                 System.out.println("[DEBUG] Received CRASH_NOW command. Simulating unexpected shutdown...");
-                System.exit(1); // 强行退出Java进程，模拟断电
+                System.exit(1);
             }
-            // === === === ===
-
             if (sql.trim().equalsIgnoreCase("FLUSH_BUFFER;")) {
                 bufferPoolManager.clear();
                 return "Buffer pool cleared.";
             }
+
             txn = transactionManager.begin();
             System.out.println("Executing: " + sql + " in TxnID=" + txn.getTransactionId());
 
@@ -95,7 +83,7 @@ public class QueryProcessor {
             Parser parser = new Parser(lexer.tokenize());
             StatementNode ast = parser.parse();
             if (ast == null) {
-                transactionManager.abort(txn); // 如果是空语句，也中止事务
+                transactionManager.abort(txn);
                 return "Empty statement.";
             }
 
@@ -103,17 +91,14 @@ public class QueryProcessor {
             semanticAnalyzer.analyze(ast);
 
             PlanNode plan = planner.createPlan(ast);
-
-            // *** 修改点：将Transaction对象传入execute方法 ***
             TupleIterator executor = executionEngine.execute(plan, txn);
 
-
-            String result = formatResults(executor); // 调用新的格式化方法
-
+            String result = formatResults(executor);
             transactionManager.commit(txn);
             return result;
         } catch (Exception e) {
-            if (txn != null) {
+            // 只有当事务仍处于活动状态时才中止
+            if (txn != null && txn.getState() == Transaction.State.ACTIVE) {
                 try {
                     System.err.println("Error occurred, aborting transaction " + txn.getTransactionId());
                     transactionManager.abort(txn);
@@ -121,25 +106,15 @@ public class QueryProcessor {
                     System.err.println("Failed to abort transaction: " + ioException.getMessage());
                 }
             }
-            // 将异常信息格式化后返回
+            // 打印堆栈信息以帮助调试
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             e.printStackTrace(pw);
-            return "ERROR: " + e.getMessage(); // 返回简洁的错误信息
+            System.err.println("Error details: " + sw.toString()); // 在服务端打印详细错误
+            return "ERROR: " + e.getMessage(); // 给客户端返回简洁错误
         }
     }
 
-    public void execute(String sql) {
-        String result = executeAndGetResult(sql);
-        System.out.println(result);
-    }
-
-    /**
-     * 将执行器返回的元组迭代器格式化为字符串。
-     *
-     * @param iterator 元组迭代器
-     * @return 格式化后的结果字符串
-     */
     private String formatResults(TupleIterator iterator) throws IOException {
         if (iterator == null) {
             return "Query OK.";
@@ -154,34 +129,17 @@ public class QueryProcessor {
         }
 
         Schema schema = iterator.getOutputSchema();
-
-        if (results.isEmpty()) {
-            if (schema != null && !schema.getColumns().isEmpty()) {
-                // 如果是 SELECT 语句但没有结果，打印表头和空集信息
-                StringBuilder sb = new StringBuilder();
-                List<String> columnNames = schema.getColumnNames();
-                List<Integer> columnWidths = columnNames.stream().map(String::length).collect(Collectors.toList());
-
-                sb.append(getSeparator(columnWidths)).append("\n");
-                sb.append(getRow(columnNames, columnWidths)).append("\n");
-                sb.append(getSeparator(columnWidths)).append("\n");
-                sb.append("Query finished, 0 rows returned.");
-                return sb.toString();
-            }
-            // 对应 UPDATE/DELETE 影响0行的情况
-            return "Query OK, 0 rows affected.";
-        }
-
-        // --- 核心打印逻辑 ---
         StringBuilder sb = new StringBuilder();
         List<String> columnNames = schema.getColumnNames();
-
-        // 1. 计算每列的最大宽度
         List<Integer> columnWidths = new ArrayList<>();
+
+        // 1. 计算每列的最大宽度 (null-safe)
         for (int i = 0; i < columnNames.size(); i++) {
             int maxWidth = columnNames.get(i).length();
             for (Tuple tuple : results) {
-                maxWidth = Math.max(maxWidth, tuple.getValues().get(i).getValue().toString().length());
+                Object value = tuple.getValues().get(i).getValue();
+                String cellValue = (value == null) ? "NULL" : value.toString();
+                maxWidth = Math.max(maxWidth, cellValue.length());
             }
             columnWidths.add(maxWidth);
         }
@@ -191,10 +149,11 @@ public class QueryProcessor {
         sb.append(getRow(columnNames, columnWidths)).append("\n");
         sb.append(getSeparator(columnWidths)).append("\n");
 
-        // 3. 打印数据行
+        // 3. 打印数据行 (null-safe)
         for (Tuple tuple : results) {
             List<String> values = tuple.getValues().stream()
-                    .map(v -> v.getValue().toString())
+                    // --- 这就是最终的修复！ ---
+                    .map(v -> (v.getValue() == null) ? "NULL" : v.getValue().toString())
                     .collect(Collectors.toList());
             sb.append(getRow(values, columnWidths)).append("\n");
         }
@@ -223,6 +182,7 @@ public class QueryProcessor {
         return sb.toString();
     }
 
+<<<<<<< HEAD
     // 在 QueryProcessor.java 中添加这个新的 public 方法
     public TupleIterator executeMysql(String sql) throws Exception {
         Transaction txn = transactionManager.begin();
@@ -246,4 +206,8 @@ public class QueryProcessor {
         }
     }
 
+    public void execute(String sql) {
+        String result = executeAndGetResult(sql);
+        System.out.println(result);
+    }
 }
