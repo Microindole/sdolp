@@ -186,7 +186,10 @@ public class QueryProcessor {
     public TupleIterator executeMysql(String sql) throws Exception {
         Transaction txn = transactionManager.begin();
         try {
-            Lexer lexer = new Lexer(sql);
+            // 处理SQL语句，自动添加分号
+            String normalizedSql = normalizeSqlForMysql(sql);
+
+            Lexer lexer = new Lexer(normalizedSql);
             Parser parser = new Parser(lexer.tokenize());
             StatementNode ast = parser.parse();
             if (ast == null) {
@@ -205,8 +208,19 @@ public class QueryProcessor {
         }
     }
 
-    public void execute(String sql) {
-        String result = executeAndGetResult(sql);
-        System.out.println(result);
+    // 添加这个辅助方法来规范化SQL语句
+    private String normalizeSqlForMysql(String sql) {
+        if (sql == null || sql.trim().isEmpty()) {
+            return sql;
+        }
+
+        String trimmedSql = sql.trim();
+
+        // 如果SQL语句不以分号结尾，自动添加分号
+        if (!trimmedSql.endsWith(";")) {
+            trimmedSql += ";";
+        }
+
+        return trimmedSql;
     }
 }

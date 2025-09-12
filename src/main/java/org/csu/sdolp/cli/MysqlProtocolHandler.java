@@ -281,7 +281,23 @@ public class MysqlProtocolHandler implements Runnable {
             } else if (sqlLower.contains("tables")) {
                 // Return empty table list
                 sendResultSetHeader(out, sequenceId, 1);
-                sendSimpleFieldPacket(out, sequenceId + 1, "Tables");
+                sendSimpleFieldPacket(out, sequenceId + 1, "Tables_in_minidb");
+                sendEofPacket(out, sequenceId + 2);
+                sendEofPacket(out, sequenceId + 3);
+                return true;
+            } else if (sqlLower.contains("variables")) {
+                // Handle SHOW VARIABLES queries
+                return handleShowVariables(sql, out, sequenceId);
+            } else if (sqlLower.contains("engines")) {
+                // Handle SHOW ENGINES or queries about engines
+                return handleShowEngines(out, sequenceId);
+            } else if (sqlLower.contains("status")) {
+                // Handle SHOW STATUS queries
+                return handleShowStatus(out, sequenceId);
+            } else {
+                // For any other SHOW statement, return empty result set
+                sendResultSetHeader(out, sequenceId, 1);
+                sendSimpleFieldPacket(out, sequenceId + 1, "Result");
                 sendEofPacket(out, sequenceId + 2);
                 sendEofPacket(out, sequenceId + 3);
                 return true;
@@ -290,12 +306,49 @@ public class MysqlProtocolHandler implements Runnable {
 
         // Handle SELECT @@variable queries
         if (sqlLower.contains("@@")) {
-            sendOkPacket(out, sequenceId, 0, 0);
+            return handleSystemVariables(sql, out, sequenceId);
+        }
+
+        // Handle SELECT from information_schema
+        if (sqlLower.contains("information_schema")) {
+            return handleInformationSchema(sql, out, sequenceId);
+        }
+
+        // Handle multiple statements separated by semicolon
+        if (sql.contains(";")) {
+            String[] statements = sql.split(";");
+            for (String stmt : statements) {
+                stmt = stmt.trim();
+                if (!stmt.isEmpty()) {
+                    if (!handleSpecialQuery(stmt, out, sequenceId)) {
+                        // If any statement can't be handled specially, return false
+                        return false;
+                    }
+                }
+            }
             return true;
         }
 
         return false;
     }
+
+    // 添加处理SHOW STATUS的方法
+    private boolean handleShowStatus(OutputStream out, int sequenceId) throws IOException {
+        sendResultSetHeader(out, sequenceId, 2);
+        sendSimpleFieldPacket(out, sequenceId + 1, "Variable_name");
+        sendSimpleFieldPacket(out, sequenceId + 2, "Value");
+        sendEofPacket(out, sequenceId + 3);
+
+        // Send some dummy status variables
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        bos.write(writeLengthEncodedString("Connections"));
+        bos.write(writeLengthEncodedString("1"));
+        writePacket(out, bos.toByteArray(), sequenceId + 4);
+
+        sendEofPacket(out, sequenceId + 5);
+        return true;
+    }
+
 
     private int sendSimpleFieldPacket(OutputStream out, int sequenceId, String fieldName) throws IOException {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -450,5 +503,98 @@ public class MysqlProtocolHandler implements Runnable {
         bos.write(writeLengthEncodedInt(data.length));
         bos.write(data);
         return bos.toByteArray();
+    }
+
+    private boolean handleShowVariables(String sql, OutputStream out, int sequenceId) throws IOException {
+        // Return dummy variables
+        sendResultSetHeader(out, sequenceId, 2);
+        sendSimpleFieldPacket(out, sequenceId + 1, "Variable_name");
+        sendSimpleFieldPacket(out, sequenceId + 2, "Value");
+        sendEofPacket(out, sequenceId + 3);
+
+        // Send some dummy variable rows if needed
+        if (sql.toLowerCase().contains("lower_case")) {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            bos.write(writeLengthEncodedString("lower_case_table_names"));
+            bos.write(writeLengthEncodedString("0"));
+            writePacket(out, bos.toByteArray(), sequenceId + 4);
+        } else if (sql.toLowerCase().contains("sql_mode")) {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            bos.write(writeLengthEncodedString("sql_mode"));
+            bos.write(writeLengthEncodedString("STRICT_TRANS_TABLES"));
+            writePacket(out, bos.toByteArray(), sequenceId + 4);
+        }
+
+        sendEofPacket(out, sequenceId + 5);
+        return true;
+    }
+
+    private boolean handleShowEngines(OutputStream out, int sequenceId) throws IOException {
+        sendResultSetHeader(out, sequenceId, 6);
+        sendSimpleFieldPacket(out, sequenceId + 1, "Engine");
+        sendSimpleFieldPacket(out, sequenceId + 2, "Support");
+        sendSimpleFieldPacket(out, sequenceId + 3, "Comment");
+        sendSimpleFieldPacket(out, sequenceId + 4, "Transactions");
+        sendSimpleFieldPacket(out, sequenceId + 5, "XA");
+        sendSimpleFieldPacket(out, sequenceId + 6, "Savepoints");
+        sendEofPacket(out, sequenceId + 7);
+
+        // Return dummy engine info
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        bos.write(writeLengthEncodedString("InnoDB"));
+        bos.write(writeLengthEncodedString("DEFAULT"));
+        bos.write(writeLengthEncodedString("Supports transactions, row-level locking, and foreign keys"));
+        bos.write(writeLengthEncodedString("YES"));
+        bos.write(writeLengthEncodedString("YES"));
+        bos.write(writeLengthEncodedString("YES"));
+        writePacket(out, bos.toByteArray(), sequenceId + 8);
+
+        sendEofPacket(out, sequenceId + 9);
+        return true;
+    }
+
+    private boolean handleSystemVariables(String sql, OutputStream out, int sequenceId) throws IOException {
+        // Handle SELECT @@variable queries
+        sendResultSetHeader(out, sequenceId, 1);
+        sendSimpleFieldPacket(out, sequenceId + 1, "Value");
+        sendEofPacket(out, sequenceId + 2);
+
+        // Return dummy value
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        bos.write(writeLengthEncodedString("dummy_value"));
+        writePacket(out, bos.toByteArray(), sequenceId + 3);
+
+        sendEofPacket(out, sequenceId + 4);
+        return true;
+    }
+
+    private boolean handleInformationSchema(String sql, OutputStream out, int sequenceId) throws IOException {
+        String sqlLower = sql.toLowerCase();
+
+        if (sqlLower.contains("engines")) {
+            // Handle queries like: SELECT COUNT(*) AS support_ndb FROM information_schema.ENGINES WHERE Engine = 'ndbcluster'
+            sendResultSetHeader(out, sequenceId, 1);
+            if (sqlLower.contains("count")) {
+                sendSimpleFieldPacket(out, sequenceId + 1, "support_ndb");
+            } else {
+                sendSimpleFieldPacket(out, sequenceId + 1, "Result");
+            }
+            sendEofPacket(out, sequenceId + 2);
+
+            // Return count of 0 for ndbcluster
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            bos.write(writeLengthEncodedString("0"));
+            writePacket(out, bos.toByteArray(), sequenceId + 3);
+
+            sendEofPacket(out, sequenceId + 4);
+            return true;
+        }
+
+        // For other information_schema queries, return empty result
+        sendResultSetHeader(out, sequenceId, 1);
+        sendSimpleFieldPacket(out, sequenceId + 1, "Result");
+        sendEofPacket(out, sequenceId + 2);
+        sendEofPacket(out, sequenceId + 3);
+        return true;
     }
 }
