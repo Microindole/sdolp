@@ -24,7 +24,7 @@ public class ServerHost {
         recoveryManager.recover(); // 执行恢复！
 
         // 2. 监听一个端口 (例如 9999)
-        int port = 9999;
+        int port = 8848;
         ServerSocket serverSocket = new ServerSocket(port);
         System.out.println("MiniDB server started. Listening on port " + port + "...");
 

@@ -10,7 +10,7 @@ public class InteractiveShell {
 
     public static void main(String[] args) {
         String host = "localhost";
-        int port = 9999;
+        int port = 8848;
 
         System.out.println("Attempting to connect to MiniDB server at " + host + ":" + port + "...");
 

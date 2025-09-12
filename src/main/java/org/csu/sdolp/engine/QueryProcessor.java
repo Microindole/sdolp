@@ -38,6 +38,7 @@ public class QueryProcessor {
     private final LogManager logManager;
     @Getter
     private final LockManager lockManager;
+    @Getter
     private final TransactionManager transactionManager;
 
     public QueryProcessor(String dbFilePath) {
@@ -222,5 +223,27 @@ public class QueryProcessor {
         }
 
         return trimmedSql;
+    }
+
+    /**
+     * 为给定的SQL创建一个执行器迭代器。
+     * 这个方法假定一个事务已经由调用者开启。
+     * @param sql SQL 语句
+     * @param txn 当前的事务
+     * @return 一个可以遍历结果的元组迭代器
+     */
+    public TupleIterator createExecutorForQuery(String sql, Transaction txn) throws Exception {
+        String normalizedSql = normalizeSqlForMysql(sql);
+
+        Lexer lexer = new Lexer(normalizedSql);
+        Parser parser = new Parser(lexer.tokenize());
+        StatementNode ast = parser.parse();
+        if (ast == null) {
+            return null;
+        }
+        SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(catalog);
+        semanticAnalyzer.analyze(ast);
+        PlanNode plan = planner.createPlan(ast);
+        return executionEngine.execute(plan, txn);
     }
 }

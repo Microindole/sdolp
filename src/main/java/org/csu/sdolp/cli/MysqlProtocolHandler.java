@@ -4,6 +4,8 @@ import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.engine.QueryProcessor;
 import org.csu.sdolp.executor.TupleIterator;
+import org.csu.sdolp.transaction.Transaction;
+import org.csu.sdolp.transaction.TransactionManager;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -115,7 +117,7 @@ public class MysqlProtocolHandler implements Runnable {
         // 1. Protocol version (1 byte)
         packet.write(10);
 
-        // 2. Server version string (null-terminated)
+        // 2. ServerRemote version string (null-terminated)
         String serverVersion = "8.0.28-minidb";
         packet.write(serverVersion.getBytes(StandardCharsets.UTF_8));
         packet.write(0);
@@ -203,36 +205,64 @@ public class MysqlProtocolHandler implements Runnable {
                     return;
                 }
 
+                Transaction txn = null;
+                TransactionManager transactionManager = queryProcessor.getTransactionManager(); // 获取事务管理器
+
+
                 try {
-                    TupleIterator iterator = queryProcessor.executeMysql(sql);
+                    // 1. 在处理查询前开始事务
+                    txn = transactionManager.begin();
 
-                    if (iterator == null || iterator.getOutputSchema() == null) {
+                    // 2. 调用新的方法，在当前事务中执行查询
+                    TupleIterator iterator = queryProcessor.createExecutorForQuery(sql, txn);
+
+                    // 3. 判断是返回结果集 (SELECT) 还是只返回OK (INSERT/UPDATE/CREATE...)
+                    if (iterator == null || iterator.getOutputSchema() == null ||
+                            "message".equals(iterator.getOutputSchema().getColumns().get(0).getName()) ||
+                            "inserted_rows".equals(iterator.getOutputSchema().getColumns().get(0).getName()) ||
+                            "deleted_rows".equals(iterator.getOutputSchema().getColumns().get(0).getName()) ||
+                            "updated_rows".equals(iterator.getOutputSchema().getColumns().get(0).getName()))
+                    {
+                        // 对于 DML/DDL，消耗掉迭代器以确保操作执行
+                        if (iterator != null && iterator.hasNext()) {
+                            iterator.next();
+                        }
                         sendOkPacket(out, serverSequenceId, 0, 0);
-                        return;
+                    } else {
+                        // 对于 SELECT 查询，获取所有结果
+                        Schema schema = iterator.getOutputSchema();
+                        List<Tuple> results = new ArrayList<>();
+                        while (iterator.hasNext()) {
+                            results.add(iterator.next());
+                        }
+
+                        // 按照MySQL协议发送结果集
+                        serverSequenceId = sendResultSetHeader(out, serverSequenceId, schema.getColumns().size());
+                        serverSequenceId = sendFieldPackets(out, serverSequenceId, schema);
+                        serverSequenceId = sendEofPacket(out, serverSequenceId);
+
+                        if (!results.isEmpty()) {
+                            serverSequenceId = sendRowPackets(out, serverSequenceId, results);
+                        }
+                        sendEofPacket(out, serverSequenceId);
                     }
 
-                    Schema schema = iterator.getOutputSchema();
-                    List<Tuple> results = new ArrayList<>();
-                    while (iterator.hasNext()) {
-                        results.add(iterator.next());
-                    }
-
-                    // Send result set
-                    serverSequenceId = sendResultSetHeader(out, serverSequenceId, schema.getColumns().size());
-                    serverSequenceId = sendFieldPackets(out, serverSequenceId, schema);
-                    serverSequenceId = sendEofPacket(out, serverSequenceId);
-
-                    if (!results.isEmpty()) {
-                        serverSequenceId = sendRowPackets(out, serverSequenceId, results);
-                    }
-                    sendEofPacket(out, serverSequenceId);
+                    // 4. 如果所有操作都成功，提交事务
+                    transactionManager.commit(txn);
 
                 } catch (Exception e) {
                     System.err.println("Error executing query: " + e.getMessage());
                     sendErrorPacket(out, serverSequenceId, 1064, "42000",
                             "You have an error in your SQL syntax: " + e.getMessage());
+                    // 5. 如果发生任何异常，并且事务还处于活动状态，则中止事务
+                    if (txn != null && txn.getState() == Transaction.State.ACTIVE) {
+                        transactionManager.abort(txn);
+                    }
+
+                    // 6. 向客户端发送错误信息
+                    sendErrorPacket(out, serverSequenceId, 1064, "42000", "Error: " + e.getMessage());
                 }
-                break;
+                break; // COM_QUERY case 结束
 
             case 0x04: // COM_FIELD_LIST
                 // Return empty field list

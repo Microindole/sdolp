@@ -3,12 +3,11 @@ package org.csu.sdolp.cli;
 import org.csu.sdolp.engine.QueryProcessor;
 import org.csu.sdolp.transaction.RecoveryManager;
 
-import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class Server {
+public class ServerRemote {
     // ... main 方法和其他内容保持不变 ...
     public static void main(String[] args) throws Exception {
         // 1. 启动数据库引擎，执行恢复
