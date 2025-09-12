@@ -23,13 +23,18 @@ public enum TokenType {
     INT,        // "INT" 数据类型
     VARCHAR,    // "VARCHAR" 数据类型
 
-    // ====== 新增关键字 (Phase 1) ======
+    // ====== 权限管理关键字 ======
+    USER,       // "USER"
+    IDENTIFIED, // "IDENTIFIED"
+    GRANT,      // "GRANT"
+    TO,         // "TO"
+
+    // ====== 查询子句关键字 ======
     ORDER,      // "ORDER"
     BY,         // "BY"
     ASC,        // "ASC"
     DESC,       // "DESC"
     LIMIT,      // "LIMIT"
-    // ===================================
     AND,        // "AND"
     OR,         // "OR"
     JOIN,       // “JOIN”

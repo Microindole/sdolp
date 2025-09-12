@@ -124,6 +124,12 @@ public class ExecutionEngine {
             TupleIterator childExecutor = buildExecutorTree(aggPlan.getChild(), txn);
             return new AggregateExecutor(childExecutor, aggPlan);
         }
+        if (plan instanceof CreateUserPlanNode createUserPlan) {
+            return new CreateUserExecutor(createUserPlan, catalog, txn);
+        }
+        if (plan instanceof GrantPlanNode grantPlan) {
+            return new GrantExecutor(grantPlan, catalog, txn);
+        }
         throw new UnsupportedOperationException("Unsupported plan node: " + plan.getClass().getSimpleName());
     }
     private AbstractPredicate createPredicateFromAst(ExpressionNode expression, Schema schema) {

@@ -51,11 +51,14 @@ public class Planner {
         if (ast instanceof AlterTableStatementNode stmt) {
             return createAlterTablePlan(stmt);
         }
-        // ================================================================
-        // ================== 新增：处理 CREATE INDEX ==================
-        // ================================================================
         if (ast instanceof CreateIndexStatementNode stmt) {
             return createIndexPlan(stmt);
+        }
+        if (ast instanceof CreateUserStatementNode stmt) {
+            return new CreateUserPlanNode(stmt.username(), stmt.password());
+        }
+        if (ast instanceof GrantStatementNode stmt) {
+            return new GrantPlanNode(stmt.privileges(), stmt.tableName(), stmt.username());
         }
 
         throw new UnsupportedOperationException("Unsupported statement type for planning: " + ast.getClass().getSimpleName());

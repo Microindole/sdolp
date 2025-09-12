@@ -51,13 +51,16 @@ public class Parser {
                 consume(TokenType.CREATE, "'CREATE' keyword");
                 return parseCreateIndexStatement();
             }
-            // ================================================================
-            // ================== 核心修复：增强错误处理逻辑 ==================
-            // ================================================================
-            // 如果 CREATE 后面跟的不是 TABLE 或 INDEX，抛出更具体的错误
+            if (nextToken.type() == TokenType.USER) {
+                consume(TokenType.CREATE, "'CREATE' keyword");
+                return parseCreateUserStatement();
+            }
+
             throw new ParseException(nextToken, "Expected 'TABLE' or 'INDEX' after 'CREATE'");
         }
-
+        if (match(TokenType.GRANT)) {
+            return parseGrantStatement();
+        }
         if (match(TokenType.SELECT)) {
             return parseSelectStatement();
         }
@@ -75,6 +78,40 @@ public class Parser {
         }
 
         throw new ParseException(peek(), "a valid statement (CREATE, SELECT, INSERT, DELETE, DROP, etc.)");
+    }
+
+    private CreateUserStatementNode parseCreateUserStatement() {
+        consume(TokenType.USER, "'USER' keyword after 'CREATE'");
+        // 用户名在MySQL中通常是字符串
+        IdentifierNode username = new IdentifierNode(consume(TokenType.STRING_CONST, "username as a string literal").lexeme());
+        consume(TokenType.IDENTIFIED, "'IDENTIFIED' keyword");
+        consume(TokenType.BY, "'BY' keyword");
+        LiteralNode password = new LiteralNode(consume(TokenType.STRING_CONST, "password as a string literal"));
+        return new CreateUserStatementNode(username, password);
+    }
+
+    private GrantStatementNode parseGrantStatement() {
+        List<IdentifierNode> privileges = new ArrayList<>();
+        // 解析权限列表，例如 SELECT, INSERT
+        do {
+            Token privilegeToken = peek();
+            TokenType type = privilegeToken.type();
+
+            // 权限类型可以是具体的关键字(SELECT等)，也可以是通用的标识符(例如ALL)
+            if (type == TokenType.SELECT || type == TokenType.INSERT || type == TokenType.UPDATE || type == TokenType.DELETE || type == TokenType.IDENTIFIER) {
+                advance(); // 消耗掉这个Token
+                privileges.add(new IdentifierNode(privilegeToken.lexeme()));
+            } else {
+                // 如果不是以上任何一种，则说明语法错误
+                throw new ParseException(privilegeToken, "a valid privilege type (e.g., SELECT, INSERT, ALL)");
+            }
+        } while (match(TokenType.COMMA));
+
+        consume(TokenType.ON, "'ON' keyword");
+        IdentifierNode tableName = new IdentifierNode(consume(TokenType.IDENTIFIER, "table name").lexeme());
+        consume(TokenType.TO, "'TO' keyword");
+        IdentifierNode username = new IdentifierNode(consume(TokenType.STRING_CONST, "username as a string literal").lexeme());
+        return new GrantStatementNode(privileges, tableName, username);
     }
 
     private DropTableStatementNode parseDropTableStatement() {

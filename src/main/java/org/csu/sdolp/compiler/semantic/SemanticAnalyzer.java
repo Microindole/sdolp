@@ -10,6 +10,7 @@ import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.compiler.lexer.TokenType;
 import org.csu.sdolp.compiler.parser.ast.*;
 
+import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -21,6 +22,7 @@ import java.util.Set;
 public class SemanticAnalyzer {
 
     private final Catalog catalog;
+    private static final Set<String> VALID_PRIVILEGES = Set.of("SELECT", "INSERT", "UPDATE", "DELETE", "ALL");
 
     public SemanticAnalyzer(Catalog catalog) {
         this.catalog = catalog;
@@ -45,6 +47,59 @@ public class SemanticAnalyzer {
             analyzeDropTable(dropTable, session);
         } else if (node instanceof AlterTableStatementNode alterTable) {
             analyzeAlterTable(alterTable, session);
+        }  else if (node instanceof CreateUserStatementNode createUser) {
+            analyzeCreateUser(createUser, session);
+        } else if (node instanceof GrantStatementNode grant) {
+            analyzeGrant(grant, session);
+        }
+    }
+
+    private void analyzeCreateUser(CreateUserStatementNode node, Session session) {
+        // 1. 权限检查: 只有 root 用户可以创建新用户
+        if (!"root".equalsIgnoreCase(session.getUsername())) {
+            throw new SemanticException("Access denied for user '" + session.getUsername() + "'. CREATE USER privilege required.");
+        }
+        // 2. 逻辑检查: 检查用户名是否已存在
+        String newUsername = node.username().getName();
+        if (catalog.getPasswordHash(newUsername) != null) {
+            throw new SemanticException("User '" + newUsername + "' already exists.");
+        }
+    }
+
+    private void analyzeGrant(GrantStatementNode node, Session session) {
+        // 1. 权限检查: 只有 root 用户可以授权
+        if (!"root".equalsIgnoreCase(session.getUsername())) {
+            throw new SemanticException("Access denied for user '" + session.getUsername() + "'. GRANT privilege required.");
+        }
+        // 2. 逻辑检查: 检查被授权的用户是否存在
+        String targetUsername = node.username().getName();
+        if (catalog.getPasswordHash(targetUsername) == null) {
+            throw new SemanticException("User '" + targetUsername + "' does not exist.");
+        }
+        // 3. 逻辑检查: 检查授权的表是否存在 (除非是授权所有表 '*')
+        String tableName = node.tableName().getName();
+        if (!tableName.equals("*") && catalog.getTable(tableName) == null) {
+            throw new SemanticException("Table '" + tableName + "' not found.");
+        }
+        // 4. 逻辑检查: 检查授予的权限类型是否合法
+        for (IdentifierNode privilegeNode : node.privileges()) {
+            String privilegeType = privilegeNode.getName().toUpperCase();
+            if (!VALID_PRIVILEGES.contains(privilegeType)) {
+                throw new SemanticException("Invalid privilege type '" + privilegeNode.getName() + "'.");
+            }
+        }
+        // 5. 预先更新内存缓存。
+        // 这一步模拟了GRANT执行后的效果，使得在同一个事务或批处理中，
+        // 后续的语句能够立即看到此次授权的结果。
+        // 真正的磁盘写入操作仍然由后续的 GrantExecutor 完成。
+        try {
+            for (IdentifierNode privilegeNode : node.privileges()) {
+                catalog.grantPrivilege(targetUsername, tableName, privilegeNode.getName());
+            }
+        } catch (IOException e) {
+            // 在语义分析阶段，我们假设IO操作会成功，如果失败则在执行阶段处理
+            // 但如果确实需要处理，可以抛出一个特定的异常
+            throw new SemanticException("Failed to pre-apply grant in memory: " + e.getMessage());
         }
     }
 
@@ -133,21 +188,7 @@ public class SemanticAnalyzer {
                         throw new SemanticException("Column '" + idNode.getFullName() + "' must appear in the GROUP BY clause or be used in an aggregate function.");
                     }
                     // 假设您有 AggregateExpressionNode
-                }/* else if (expr instanceof AggregateExpressionNode aggNode) {
-                    // 检查聚合函数的参数
-                    if (!aggNode.isStar()) {
-                        if (aggNode.argument() instanceof IdentifierNode argId) {
-                            checkColumnExistsInJoinedTables(leftTableInfo, rightTableInfo, argId);
-                        } else {
-                            throw new SemanticException("Aggregate function argument must be a column identifier.");
-                        }
-                    } else {
-                        // COUNT(*) 的特殊情况检查
-                        if (!aggNode.functionName().equalsIgnoreCase("COUNT")) {
-                            throw new SemanticException("The '*' argument is only valid for the COUNT function.");
-                        }
-                    }
-                }*/
+                }
             }
         } else if (!groupByColumnNames.isEmpty()) {
             // 如果是 SELECT * 但有 GROUP BY，这是不合法的 (标准SQL)

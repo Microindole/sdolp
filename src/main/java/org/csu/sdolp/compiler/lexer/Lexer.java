@@ -56,6 +56,10 @@ public class Lexer {
         keywords.put("avg", TokenType.AVG);
         keywords.put("min", TokenType.MIN);
         keywords.put("max", TokenType.MAX);
+        keywords.put("user", TokenType.USER);
+        keywords.put("identified", TokenType.IDENTIFIED);
+        keywords.put("grant", TokenType.GRANT);
+        keywords.put("to", TokenType.TO);
     }
 
     public Lexer(String input) {

@@ -29,7 +29,7 @@ public class Catalog {
     // 用户和权限的内存缓存
     private final Map<String, byte[]> users; // key: username, value: password hash
     private final Map<String, List<PrivilegeInfo>> userPrivileges; // key: username
-
+    private final Map<String, Integer> userIds; // key: username, value: userId
     // --- 元数据表的特殊定义 ---
     // 存储所有表的信息 (table_id, table_name, first_page_id)
     public static final String CATALOG_TABLES_TABLE_NAME = "_catalog_tables";
@@ -49,6 +49,7 @@ public class Catalog {
     public static final String CATALOG_PRIVILEGES_TABLE_NAME = "_catalog_privileges";
     private final Schema privilegesTableSchema;
     private PageId privilegesTableFirstPageId;
+    private final AtomicInteger nextPrivilegeId;
 
 
     public Catalog(BufferPoolManager bufferPoolManager) throws IOException {
@@ -59,6 +60,8 @@ public class Catalog {
         this.indices = new ConcurrentHashMap<>();
         this.users = new ConcurrentHashMap<>();
         this.userPrivileges = new ConcurrentHashMap<>();
+        this.userIds = new ConcurrentHashMap<>();
+        this.nextPrivilegeId = new AtomicInteger(0);
 
         // 定义元数据表的 Schema
         this.tablesTableSchema = new Schema(Arrays.asList(
@@ -549,6 +552,62 @@ public class Catalog {
         }
         // 检查用户是否对该特定表有具体的操作权限
         return privileges.stream().anyMatch(p -> p.tableName.equalsIgnoreCase(tableName) && p.privilegeType.equalsIgnoreCase(privilegeType));
+    }
+
+    public void createUser(String username, String password) throws IOException {
+        // SemanticAnalyzer 已经检查过用户是否存在，但为了健壮性可以再检查一次
+        if (users.containsKey(username)) {
+            throw new IllegalStateException("User '" + username + "' already exists.");
+        }
+
+        // 1. 准备数据
+        int newUserId = userIds.size(); // 简单地使用当前用户数作为新ID
+        String passwordHash = hashPassword(password);
+        Tuple userTuple = new Tuple(Arrays.asList(new Value(newUserId), new Value(username), new Value(passwordHash)));
+
+        // 2. 将新用户数据写入 _catalog_users 表
+        Page usersPage = bufferPoolManager.getPage(usersTableFirstPageId);
+        if (!usersPage.insertTuple(userTuple)) {
+            // 如果当前页满了，需要实现分配新页的逻辑。这里简化处理。
+            throw new IOException("Failed to insert new user into users catalog page. Page might be full.");
+        }
+        bufferPoolManager.flushPage(usersTableFirstPageId); // 确保持久化
+
+        // 3. 更新内存缓存
+        users.put(username, passwordHash.getBytes(StandardCharsets.UTF_8));
+        userIds.put(username, newUserId);
+
+        System.out.println("[Catalog] User '" + username + "' created successfully.");
+    }
+
+    public void grantPrivilege(String username, String tableName, String privilegeType) throws IOException {
+        // SemanticAnalyzer 已经检查过用户和表的存在性
+
+        // 1. 准备数据
+        Integer userId = userIds.get(username);
+        if (userId == null) {
+            throw new IllegalStateException("User '" + username + "' not found in memory cache.");
+        }
+        int newPrivilegeId = nextPrivilegeId.getAndIncrement();
+        Tuple privilegeTuple = new Tuple(Arrays.asList(
+                new Value(newPrivilegeId),
+                new Value(userId),
+                new Value(tableName),
+                new Value(privilegeType.toUpperCase())
+        ));
+
+        // 2. 将权限数据写入 _catalog_privileges 表
+        Page privilegesPage = bufferPoolManager.getPage(privilegesTableFirstPageId);
+        if (!privilegesPage.insertTuple(privilegeTuple)) {
+            throw new IOException("Failed to insert new privilege into privileges catalog page. Page might be full.");
+        }
+        bufferPoolManager.flushPage(privilegesTableFirstPageId);
+
+        // 3. 更新内存缓存
+        userPrivileges.computeIfAbsent(username, k -> new ArrayList<>())
+                .add(new PrivilegeInfo(tableName, privilegeType.toUpperCase()));
+
+        System.out.println("[Catalog] Granted " + privilegeType + " on " + tableName + " to '" + username + "'.");
     }
 }
 
