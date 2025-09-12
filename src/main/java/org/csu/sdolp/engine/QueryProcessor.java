@@ -182,7 +182,6 @@ public class QueryProcessor {
         return sb.toString();
     }
 
-<<<<<<< HEAD
     // 在 QueryProcessor.java 中添加这个新的 public 方法
     public TupleIterator executeMysql(String sql) throws Exception {
         Transaction txn = transactionManager.begin();
