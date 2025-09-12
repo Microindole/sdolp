@@ -1,6 +1,7 @@
 package org.csu.sdolp.cli;
 
 import org.csu.sdolp.catalog.Catalog;
+import org.csu.sdolp.common.exception.SemanticException;
 import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.engine.QueryProcessor;
@@ -204,7 +205,7 @@ public class MysqlProtocolHandler implements Runnable {
         }
 
         int commandType = commandPacket.payload[0] & 0xFF;
-        int serverSequenceId = 1;
+        int serverSequenceId = commandPacket.sequenceId + 1;
 
         System.out.println("Received command type: 0x" + Integer.toHexString(commandType));
 
@@ -280,15 +281,17 @@ public class MysqlProtocolHandler implements Runnable {
 
                 } catch (Exception e) {
                     System.err.println("Error executing query: " + e.getMessage());
-                    sendErrorPacket(out, serverSequenceId, 1064, "42000",
-                            "You have an error in your SQL syntax: " + e.getMessage());
-                    // 5. 如果发生任何异常，并且事务还处于活动状态，则中止事务
+                    // 1142 (ER_COMMAND_DENIED_ERROR) 是权限错误的专用代码
+                    if (e instanceof SemanticException && e.getMessage().toLowerCase().contains("access denied")) {
+                        sendErrorPacket(out, serverSequenceId, 1142, "42000", e.getMessage());
+                    } else {
+                        // 其他错误使用通用错误码
+                        sendErrorPacket(out, serverSequenceId, 1064, "42000", "Error: " + e.getMessage());
+                    }
+
                     if (txn != null && txn.getState() == Transaction.State.ACTIVE) {
                         transactionManager.abort(txn);
                     }
-
-                    // 6. 向客户端发送错误信息
-                    sendErrorPacket(out, serverSequenceId, 1064, "42000", "Error: " + e.getMessage());
                 }
                 break; // COM_QUERY case 结束
 
@@ -336,13 +339,6 @@ public class MysqlProtocolHandler implements Runnable {
                 sendEofPacket(out, sequenceId + 2);
                 sendEofPacket(out, sequenceId + 3);
                 return true;
-            } else if (sqlLower.contains("tables")) {
-                // Return empty table list
-                sendResultSetHeader(out, sequenceId, 1);
-                sendSimpleFieldPacket(out, sequenceId + 1, "Tables_in_minidb");
-                sendEofPacket(out, sequenceId + 2);
-                sendEofPacket(out, sequenceId + 3);
-                return true;
             } else if (sqlLower.contains("variables")) {
                 // Handle SHOW VARIABLES queries
                 return handleShowVariables(sql, out, sequenceId);
@@ -352,39 +348,11 @@ public class MysqlProtocolHandler implements Runnable {
             } else if (sqlLower.contains("status")) {
                 // Handle SHOW STATUS queries
                 return handleShowStatus(out, sequenceId);
-            } else {
-                // For any other SHOW statement, return empty result set
-                sendResultSetHeader(out, sequenceId, 1);
-                sendSimpleFieldPacket(out, sequenceId + 1, "Result");
-                sendEofPacket(out, sequenceId + 2);
-                sendEofPacket(out, sequenceId + 3);
-                return true;
             }
         }
 
-        // Handle SELECT @@variable queries
-        if (sqlLower.contains("@@")) {
+        if (sqlLower.contains("@@") || sqlLower.contains("information_schema")) {
             return handleSystemVariables(sql, out, sequenceId);
-        }
-
-        // Handle SELECT from information_schema
-        if (sqlLower.contains("information_schema")) {
-            return handleInformationSchema(sql, out, sequenceId);
-        }
-
-        // Handle multiple statements separated by semicolon
-        if (sql.contains(";")) {
-            String[] statements = sql.split(";");
-            for (String stmt : statements) {
-                stmt = stmt.trim();
-                if (!stmt.isEmpty()) {
-                    if (!handleSpecialQuery(stmt, out, sequenceId)) {
-                        // If any statement can't be handled specially, return false
-                        return false;
-                    }
-                }
-            }
-            return true;
         }
 
         return false;

@@ -1,6 +1,7 @@
 package org.csu.sdolp;
 
 import org.csu.sdolp.catalog.Catalog;
+import org.csu.sdolp.cli.Session;
 import org.csu.sdolp.common.exception.SemanticException;
 import org.csu.sdolp.common.model.Column;
 import org.csu.sdolp.common.model.DataType;
@@ -30,6 +31,7 @@ public class SemanticAnalyzerTest {
     private BufferPoolManager bufferPoolManager;
     private Catalog catalog;
     private SemanticAnalyzer semanticAnalyzer;
+    private Session mockRootSession;
 
     @Before
     public void setUp() throws IOException {
@@ -39,6 +41,9 @@ public class SemanticAnalyzerTest {
         bufferPoolManager = new BufferPoolManager(10, diskManager, "LRU");
         catalog = new Catalog(bufferPoolManager);
         semanticAnalyzer = new SemanticAnalyzer(catalog);
+
+        // --- 核心修复：在这里初始化模拟的 root session ---
+        mockRootSession = Session.createAuthenticatedSession(-1, "root");
 
         // 预先创建一张表用于测试
         Schema schema = new Schema(Arrays.asList(
@@ -65,10 +70,10 @@ public class SemanticAnalyzerTest {
         System.out.println("--- Running test: testAnalyzeValidStatements ---");
         System.out.println("Goal: Verify that legally correct statements do not throw exceptions.");
         // 这些都是合法的，不应该抛出异常
-        semanticAnalyzer.analyze(parseSql("SELECT id, name FROM users;"));
-        semanticAnalyzer.analyze(parseSql("SELECT * FROM users WHERE id = 1;"));
-        semanticAnalyzer.analyze(parseSql("INSERT INTO users (id, name) VALUES (100, 'test');"));
-        semanticAnalyzer.analyze(parseSql("DELETE FROM users WHERE name = 'test';"));
+        semanticAnalyzer.analyze(parseSql("SELECT id, name FROM users;"),mockRootSession);
+        semanticAnalyzer.analyze(parseSql("SELECT * FROM users WHERE id = 1;"),mockRootSession);
+        semanticAnalyzer.analyze(parseSql("INSERT INTO users (id, name) VALUES (100, 'test');"),mockRootSession);
+        semanticAnalyzer.analyze(parseSql("DELETE FROM users WHERE name = 'test';"),mockRootSession);
         System.out.println("Result: Test PASSED.\n");
     }
 
@@ -78,7 +83,7 @@ public class SemanticAnalyzerTest {
         System.out.println("Goal: Expect a SemanticException for creating an existing table.");
         try {
             // 错误：表已存在
-            semanticAnalyzer.analyze(parseSql("CREATE TABLE users (id INT);"));
+            semanticAnalyzer.analyze(parseSql("CREATE TABLE users (id INT);"),mockRootSession);
         } finally {
             System.out.println("Result: Test threw expected exception.\n");
         }
@@ -90,7 +95,7 @@ public class SemanticAnalyzerTest {
         System.out.println("Goal: Expect a SemanticException for selecting from a non-existent table.");
         try {
             // 错误：查询一个不存在的表
-            semanticAnalyzer.analyze(parseSql("SELECT * FROM non_existent_table;"));
+            semanticAnalyzer.analyze(parseSql("SELECT * FROM non_existent_table;"),mockRootSession);
         } finally {
             System.out.println("Result: Test threw expected exception.\n");
         }
@@ -102,7 +107,7 @@ public class SemanticAnalyzerTest {
         System.out.println("Goal: Expect a SemanticException for selecting a non-existent column.");
         try {
             // 错误：查询一个不存在的列
-            semanticAnalyzer.analyze(parseSql("SELECT age FROM users;"));
+            semanticAnalyzer.analyze(parseSql("SELECT age FROM users;"),mockRootSession);
         } finally {
             System.out.println("Result: Test threw expected exception.\n");
         }
@@ -114,7 +119,7 @@ public class SemanticAnalyzerTest {
         System.out.println("Goal: Expect a SemanticException for inserting into a non-existent column.");
         try {
             // 错误：插入一个不存在的列
-            semanticAnalyzer.analyze(parseSql("INSERT INTO users (age) VALUES (30);"));
+            semanticAnalyzer.analyze(parseSql("INSERT INTO users (age) VALUES (30);"),mockRootSession);
         } finally {
             System.out.println("Result: Test threw expected exception.\n");
         }
@@ -126,7 +131,7 @@ public class SemanticAnalyzerTest {
         System.out.println("Goal: Expect a SemanticException for inserting a value with mismatched type.");
         try {
             // 错误：插入的值类型不匹配
-            semanticAnalyzer.analyze(parseSql("INSERT INTO users (id) VALUES ('a string');"));
+            semanticAnalyzer.analyze(parseSql("INSERT INTO users (id) VALUES ('a string');"),mockRootSession);
         } finally {
             System.out.println("Result: Test threw expected exception.\n");
         }
@@ -138,10 +143,9 @@ public class SemanticAnalyzerTest {
         System.out.println("Goal: Expect a SemanticException for a type mismatch in the WHERE clause.");
         try {
             // 错误：WHERE子句中类型不匹配
-            semanticAnalyzer.analyze(parseSql("SELECT * FROM users WHERE name > 123;"));
+            semanticAnalyzer.analyze(parseSql("SELECT * FROM users WHERE name > 123;"),mockRootSession);
         } finally {
             System.out.println("Result: Test threw expected exception.\n");
         }
     }
 }
-

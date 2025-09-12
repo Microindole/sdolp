@@ -1,14 +1,12 @@
-// src/test/java/org/csu/sdolp/RecoveryTest.java
 package org.csu.sdolp;
 
 import org.csu.sdolp.catalog.Catalog;
+import org.csu.sdolp.cli.Session;
 import org.csu.sdolp.compiler.lexer.Lexer;
 import org.csu.sdolp.compiler.parser.Parser;
 import org.csu.sdolp.compiler.parser.ast.StatementNode;
-import org.csu.sdolp.compiler.planner.Planner;
 import org.csu.sdolp.compiler.planner.plan.PlanNode;
 import org.csu.sdolp.compiler.semantic.SemanticAnalyzer;
-import org.csu.sdolp.engine.ExecutionEngine;
 import org.csu.sdolp.engine.QueryProcessor;
 import org.csu.sdolp.transaction.Transaction;
 import org.junit.jupiter.api.AfterEach;
@@ -126,7 +124,8 @@ public class RecoveryTest {
 
         // 2. 语义分析
         SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer((Catalog) catalog);
-        semanticAnalyzer.analyze(ast);
+        Session mockRootSession = Session.createAuthenticatedSession(txn.getTransactionId(), "root");
+        semanticAnalyzer.analyze(ast,mockRootSession);
 
         // 3. 计划生成
         Method createPlanMethod = planner.getClass().getMethod("createPlan", StatementNode.class);

@@ -91,6 +91,8 @@ public class Catalog {
         loadCatalog();
     }
 
+    public List<String> getAllTableNames() { return new ArrayList<>(tables.keySet());}
+
     private void loadCatalog() throws IOException {
         // Page 0 固定为存储 Catalog Tables Table 的第一页
         tablesTableFirstPageId = new PageId(0);
@@ -240,30 +242,17 @@ public class Catalog {
 
 
 
-        // --- 手动添加测试用户和权限 ---
-        // 1. 创建 testuser
+        // 创建 testuser，但不创建 test_table 或授予特定权限
         int testUserId = 1;
         String testPassword = "123";
         String testPasswordHash = hashPassword(testPassword);
         usersPage.insertTuple(new Tuple(Arrays.asList(new Value(testUserId), new Value("testuser"), new Value(testPasswordHash))));
-
-        // 2. 创建一个测试表
-        createTable("test_table", new Schema(List.of(new Column("id", DataType.INT))));
-
-        // 3. 授予 testuser 对 test_table 的 SELECT 权限
-        privilegesPage.insertTuple(new Tuple(Arrays.asList(
-                new Value(2), // privilege_id
-                new Value(testUserId),
-                new Value("test_table"),
-                new Value("SELECT")
-        )));
-
         bufferPoolManager.flushPage(usersPage.getPageId());
-        bufferPoolManager.flushPage(privilegesPage.getPageId());
 
-        // --- 核心修复：将 testuser 的信息也加载到内存缓存中 ---
+        // 只更新 testuser 的用户和ID缓存，权限列表为空
         users.put("testuser", testPasswordHash.getBytes(StandardCharsets.UTF_8));
-        userPrivileges.put("testuser", List.of(new PrivilegeInfo("test_table", "SELECT")));
+        userIds.put("testuser", testUserId);
+        userPrivileges.put("testuser", new ArrayList<>()); // 初始权限为空
         System.out.println("[Bootstrap] Manually created 'testuser' and loaded into memory cache.");
     }
 

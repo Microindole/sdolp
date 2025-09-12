@@ -1,6 +1,7 @@
 package org.csu.sdolp;
 
 import org.csu.sdolp.catalog.Catalog;
+import org.csu.sdolp.cli.Session;
 import org.csu.sdolp.common.model.Column;
 import org.csu.sdolp.common.model.DataType;
 import org.csu.sdolp.common.model.Schema;
@@ -64,7 +65,8 @@ public class PlannerTest {
 
         // 必须先经过语义分析
         SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(catalog);
-        semanticAnalyzer.analyze(ast);
+        Session mockRootSession = Session.createAuthenticatedSession(-1, "root");
+        semanticAnalyzer.analyze(ast,mockRootSession);
 
         return planner.createPlan(ast);
     }
