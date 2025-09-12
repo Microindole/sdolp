@@ -246,4 +246,9 @@ public class QueryProcessor {
         PlanNode plan = planner.createPlan(ast);
         return executionEngine.execute(plan, txn);
     }
+
+    public void execute(String sql){
+        String result = executeAndGetResult(sql);
+        System.out.println(result);
+    }
 }
