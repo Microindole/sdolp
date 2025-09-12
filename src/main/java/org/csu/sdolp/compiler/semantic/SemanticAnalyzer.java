@@ -2,6 +2,7 @@ package org.csu.sdolp.compiler.semantic;
 
 import org.csu.sdolp.catalog.Catalog;
 import org.csu.sdolp.catalog.TableInfo;
+import org.csu.sdolp.cli.Session;
 import org.csu.sdolp.common.exception.SemanticException;
 import org.csu.sdolp.common.model.Column;
 import org.csu.sdolp.common.model.DataType;
@@ -9,11 +10,8 @@ import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.compiler.lexer.TokenType;
 import org.csu.sdolp.compiler.parser.ast.*;
 
-import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * @author hidyouth
@@ -28,27 +26,32 @@ public class SemanticAnalyzer {
         this.catalog = catalog;
     }
 
-    public void analyze(AstNode node) {
+    public void analyze(AstNode node, Session session) {
+        if (session == null || !session.isAuthenticated()) {
+            throw new SemanticException("Access denied. User is not authenticated.");
+        }
+
         if (node instanceof CreateTableStatementNode) {
-            analyzeCreateTable((CreateTableStatementNode) node);
+            analyzeCreateTable((CreateTableStatementNode) node, session);
         } else if (node instanceof InsertStatementNode) {
-            analyzeInsert((InsertStatementNode) node);
+            analyzeInsert((InsertStatementNode) node, session);
         } else if (node instanceof SelectStatementNode) {
-            analyzeSelect((SelectStatementNode) node);
+            analyzeSelect((SelectStatementNode) node, session);
         } else if (node instanceof DeleteStatementNode) {
-            analyzeDelete((DeleteStatementNode) node);
-        } else if (node instanceof UpdateStatementNode) { // <-- 新增分支
-            analyzeUpdate((UpdateStatementNode) node);
-        }
-        else if (node instanceof DropTableStatementNode dropTable) {
-            analyzeDropTable(dropTable);
+            analyzeDelete((DeleteStatementNode) node, session);
+        } else if (node instanceof UpdateStatementNode) {
+            analyzeUpdate((UpdateStatementNode) node, session);
+        } else if (node instanceof DropTableStatementNode dropTable) {
+            analyzeDropTable(dropTable, session);
         } else if (node instanceof AlterTableStatementNode alterTable) {
-            analyzeAlterTable(alterTable);
+            analyzeAlterTable(alterTable, session);
         }
-        // 可以扩展以支持其他语句类型
     }
 
-    private void analyzeCreateTable(CreateTableStatementNode node) {
+    private void analyzeCreateTable(CreateTableStatementNode node,Session session) {
+        if (!"root".equalsIgnoreCase(session.getUsername())) {
+            throw new SemanticException("Access denied for user '" + session.getUsername() + "'. CREATE TABLE privilege required.");
+        }
         String tableName = node.tableName().getName();
         if (catalog.getTable(tableName) != null) {
             throw new SemanticException("Table '" + tableName + "' already exists.");
@@ -63,8 +66,11 @@ public class SemanticAnalyzer {
         }
     }
 
-    private void analyzeInsert(InsertStatementNode node) {
+    private void analyzeInsert(InsertStatementNode node,Session session) {
         String tableName = node.tableName().getName();
+        if (!catalog.hasPermission(session.getUsername(), tableName, "INSERT")) {
+            throw new SemanticException("Access denied for user '" + session.getUsername() + "'. INSERT command denied on table '" + tableName + "'.");
+        }
         TableInfo tableInfo = getTableOrThrow(tableName);
         Schema schema = tableInfo.getSchema();
 
@@ -95,7 +101,12 @@ public class SemanticAnalyzer {
     }
 
     // ====== (Phase 4) ======
-    private void analyzeSelect(SelectStatementNode node) {
+    private void analyzeSelect(SelectStatementNode node,Session session) {
+        String tableName = node.fromTable().getName();
+        // 权限检查
+        if (!catalog.hasPermission(session.getUsername(), tableName, "SELECT")) {
+            throw new SemanticException("Access denied for user '" + session.getUsername() + "'. SELECT command denied on table '" + tableName + "'.");
+        }
         // 1. 检查 FROM 表和 JOIN 表
         TableInfo leftTableInfo = getTableOrThrow(node.fromTable().getName());
         TableInfo rightTableInfo = null;
@@ -157,8 +168,12 @@ public class SemanticAnalyzer {
     }
 
 
-    private void analyzeDelete(DeleteStatementNode node) {
+    private void analyzeDelete(DeleteStatementNode node,Session session) {
         String tableName = node.tableName().getName();
+        // 权限检查
+        if (!catalog.hasPermission(session.getUsername(), tableName, "DELETE")) {
+            throw new SemanticException("Access denied for user '" + session.getUsername() + "'. DELETE command denied on table '" + tableName + "'.");
+        }
         TableInfo tableInfo = getTableOrThrow(tableName);
 
         // 检查 WHERE 子句
@@ -167,8 +182,12 @@ public class SemanticAnalyzer {
         }
     }
 
-    private void analyzeUpdate(UpdateStatementNode node) {
+    private void analyzeUpdate(UpdateStatementNode node,Session session) {
         String tableName = node.tableName().getName();
+        // 权限检查
+        if (!catalog.hasPermission(session.getUsername(), tableName, "UPDATE")) {
+            throw new SemanticException("Access denied for user '" + session.getUsername() + "'. UPDATE command denied on table '" + tableName + "'.");
+        }
         TableInfo tableInfo = getTableOrThrow(tableName);
 
         for (SetClauseNode clause : node.setClauses()) {
@@ -188,12 +207,20 @@ public class SemanticAnalyzer {
         }
     }
 
-    private void analyzeDropTable(DropTableStatementNode node) {
+    private void analyzeDropTable(DropTableStatementNode node,Session session) {
+        // 只有 root 可以删表
+        if (!"root".equalsIgnoreCase(session.getUsername())) {
+            throw new SemanticException("Access denied for user '" + session.getUsername() + "'. DROP TABLE privilege required.");
+        }
         // 检查要删除的表是否存在
         getTableOrThrow(node.tableName().getName());
     }
 
-    private void analyzeAlterTable(AlterTableStatementNode node) {
+    private void analyzeAlterTable(AlterTableStatementNode node,Session session) {
+        // 只有 root 可以改表结构
+        if (!"root".equalsIgnoreCase(session.getUsername())) {
+            throw new SemanticException("Access denied for user '" + session.getUsername() + "'. ALTER TABLE privilege required.");
+        }
         String tableName = node.tableName().getName();
         TableInfo tableInfo = getTableOrThrow(tableName);
 

@@ -2,13 +2,13 @@ package org.csu.sdolp.cli;
 
 import org.csu.sdolp.engine.QueryProcessor;
 import org.csu.sdolp.transaction.RecoveryManager;
+import org.csu.sdolp.catalog.Catalog;
 
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ServerRemote {
-    // ... main 方法和其他内容保持不变 ...
     public static void main(String[] args) throws Exception {
         // 1. 启动数据库引擎，执行恢复
         final QueryProcessor queryProcessor = new QueryProcessor("minidb.data");
@@ -39,12 +39,10 @@ public class ServerRemote {
 
         while (true) {
             Socket clientSocket = serverSocket.accept();
-
-            // 2. **核心修改**: 为每个客户端连接启动一个新的 MysqlProtocolHandler 线程
             int connectionId = connectionCounter.incrementAndGet();
             System.out.println("Client connected: " + clientSocket.getInetAddress() + " (Connection ID: " + connectionId + ")");
-
-            MysqlProtocolHandler handler = new MysqlProtocolHandler(clientSocket, queryProcessor, connectionId);
+            Catalog catalog = queryProcessor.getCatalog();
+            MysqlProtocolHandler handler = new MysqlProtocolHandler(clientSocket, queryProcessor, catalog, connectionId);
             new Thread(handler).start();
         }
     }

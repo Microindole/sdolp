@@ -2,6 +2,7 @@ package org.csu.sdolp.engine;
 
 import lombok.Getter;
 import org.csu.sdolp.catalog.Catalog;
+import org.csu.sdolp.cli.Session;
 import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.compiler.lexer.Lexer;
@@ -65,7 +66,7 @@ public class QueryProcessor {
         logManager.close();
     }
 
-    public String executeAndGetResult(String sql) {
+    public String executeAndGetResult(String sql, Session session) {
         Transaction txn = null;
         try {
             if (sql.trim().equalsIgnoreCase("CRASH_NOW;")) {
@@ -89,7 +90,7 @@ public class QueryProcessor {
             }
 
             SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(catalog);
-            semanticAnalyzer.analyze(ast);
+            semanticAnalyzer.analyze(ast,session);
 
             PlanNode plan = planner.createPlan(ast);
             TupleIterator executor = executionEngine.execute(plan, txn);
@@ -114,6 +115,11 @@ public class QueryProcessor {
             System.err.println("Error details: " + sw.toString()); // 在服务端打印详细错误
             return "ERROR: " + e.getMessage(); // 给客户端返回简洁错误
         }
+    }
+
+    public String executeAndGetResult(String sql) {
+        // 这个版本现在只用于内部测试，或者假设一个已经认证的root session
+        return executeAndGetResult(sql, Session.createAuthenticatedSession(-1, "root"));
     }
 
     private String formatResults(TupleIterator iterator) throws IOException {
@@ -184,7 +190,7 @@ public class QueryProcessor {
     }
 
     // 在 QueryProcessor.java 中添加这个新的 public 方法
-    public TupleIterator executeMysql(String sql) throws Exception {
+    public TupleIterator executeMysql(String sql, Session session) throws Exception {
         Transaction txn = transactionManager.begin();
         try {
             // 处理SQL语句，自动添加分号
@@ -198,7 +204,7 @@ public class QueryProcessor {
                 return null;
             }
             SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(catalog);
-            semanticAnalyzer.analyze(ast);
+            semanticAnalyzer.analyze(ast,session);
             PlanNode plan = planner.createPlan(ast);
             TupleIterator iterator = executionEngine.execute(plan, txn);
             transactionManager.commit(txn);
@@ -232,7 +238,7 @@ public class QueryProcessor {
      * @param txn 当前的事务
      * @return 一个可以遍历结果的元组迭代器
      */
-    public TupleIterator createExecutorForQuery(String sql, Transaction txn) throws Exception {
+    public TupleIterator createExecutorForQuery(String sql, Transaction txn, Session session) throws Exception {
         String normalizedSql = normalizeSqlForMysql(sql);
 
         Lexer lexer = new Lexer(normalizedSql);
@@ -242,7 +248,7 @@ public class QueryProcessor {
             return null;
         }
         SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(catalog);
-        semanticAnalyzer.analyze(ast);
+        semanticAnalyzer.analyze(ast,session);
         PlanNode plan = planner.createPlan(ast);
         return executionEngine.execute(plan, txn);
     }

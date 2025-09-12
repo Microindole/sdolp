@@ -6,10 +6,10 @@ import org.csu.sdolp.storage.page.Page;
 import org.csu.sdolp.storage.page.PageId;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -26,6 +26,9 @@ public class Catalog {
     private final AtomicInteger nextTableId;
     private final Map<String, IndexInfo> indices;
 
+    // 用户和权限的内存缓存
+    private final Map<String, byte[]> users; // key: username, value: password hash
+    private final Map<String, List<PrivilegeInfo>> userPrivileges; // key: username
 
     // --- 元数据表的特殊定义 ---
     // 存储所有表的信息 (table_id, table_name, first_page_id)
@@ -38,6 +41,15 @@ public class Catalog {
     private final Schema columnsTableSchema;
     private PageId columnsTableFirstPageId;
 
+    // 用户和权限表的定义
+    public static final String CATALOG_USERS_TABLE_NAME = "_catalog_users";
+    private final Schema usersTableSchema;
+    private PageId usersTableFirstPageId;
+
+    public static final String CATALOG_PRIVILEGES_TABLE_NAME = "_catalog_privileges";
+    private final Schema privilegesTableSchema;
+    private PageId privilegesTableFirstPageId;
+
 
     public Catalog(BufferPoolManager bufferPoolManager) throws IOException {
         this.bufferPoolManager = bufferPoolManager;
@@ -45,6 +57,8 @@ public class Catalog {
         this.tableIds = new ConcurrentHashMap<>();
         this.nextTableId = new AtomicInteger(0);
         this.indices = new ConcurrentHashMap<>();
+        this.users = new ConcurrentHashMap<>();
+        this.userPrivileges = new ConcurrentHashMap<>();
 
         // 定义元数据表的 Schema
         this.tablesTableSchema = new Schema(Arrays.asList(
@@ -57,6 +71,17 @@ public class Catalog {
                 new Column("column_name", DataType.VARCHAR),
                 new Column("column_type", DataType.VARCHAR), // DataType.toString()
                 new Column("column_index", DataType.INT)
+        ));
+        this.usersTableSchema = new Schema(Arrays.asList(
+                new Column("user_id", DataType.INT),
+                new Column("user_name", DataType.VARCHAR),
+                new Column("password_hash", DataType.VARCHAR) // Store hash instead of plain text
+        ));
+        this.privilegesTableSchema = new Schema(Arrays.asList(
+                new Column("privilege_id", DataType.INT),
+                new Column("user_id", DataType.INT),
+                new Column("table_name", DataType.VARCHAR),
+                new Column("privilege_type", DataType.VARCHAR) // e.g., "SELECT", "INSERT", "ALL"
         ));
 
         // 加载或初始化目录
@@ -87,8 +112,10 @@ public class Catalog {
                     maxTableId = tableId;
                 }
                 tableIds.put(tableName, tableId);
-                if (tableName.equals(CATALOG_COLUMNS_TABLE_NAME)) {
-                    columnsTableFirstPageId = new PageId(firstPageId);
+                switch (tableName) {
+                    case CATALOG_COLUMNS_TABLE_NAME -> columnsTableFirstPageId = new PageId(firstPageId);
+                    case CATALOG_USERS_TABLE_NAME -> usersTableFirstPageId = new PageId(firstPageId);
+                    case CATALOG_PRIVILEGES_TABLE_NAME -> privilegesTableFirstPageId = new PageId(firstPageId);
                 }
             }
             nextTableId.set(maxTableId + 1);
@@ -113,51 +140,150 @@ public class Catalog {
                 int firstPageId = (int) getTableTuple(tableName).getValues().get(2).getValue();
                 tables.put(tableName, new TableInfo(tableName, schema, new PageId(firstPageId)));
             }
+
+            Page usersPage = bufferPoolManager.getPage(usersTableFirstPageId);
+            List<Tuple> userTuples = usersPage.getAllTuples(usersTableSchema);
+            for (Tuple userTuple : userTuples) {
+                String userName = (String) userTuple.getValues().get(1).getValue();
+                String passwordHash = (String) userTuple.getValues().get(2).getValue();
+                users.put(userName, passwordHash.getBytes(StandardCharsets.UTF_8));
+            }
+
+            Page privilegesPage = bufferPoolManager.getPage(privilegesTableFirstPageId);
+            List<Tuple> privilegeTuples = privilegesPage.getAllTuples(privilegesTableSchema);
+            for (Tuple privilegeTuple : privilegeTuples) {
+                int userId = (int) privilegeTuple.getValues().get(1).getValue();
+                String tableName = (String) privilegeTuple.getValues().get(2).getValue();
+                String privilegeType = (String) privilegeTuple.getValues().get(3).getValue();
+                // Find username by userId (this is inefficient, a map would be better in a real system)
+                String userName = findUserNameById(userId, userTuples);
+                if (userName != null) {
+                    userPrivileges.computeIfAbsent(userName, k -> new ArrayList<>())
+                            .add(new PrivilegeInfo(tableName, privilegeType));
+                }
+            }
         }
     }
 
-    private void bootstrap() throws IOException {
-        bufferPoolManager.newPage();
+    private String findUserNameById(int userId, List<Tuple> userTuples) {
+        for (Tuple userTuple : userTuples) {
+            if ((int) userTuple.getValues().get(0).getValue() == userId) {
+                return (String) userTuple.getValues().get(1).getValue();
+            }
+        }
+        return null;
+    }
 
+    private void bootstrap() throws IOException {
+        // 1. 分配 Page 0，预留给 _catalog_tables
+        PageId pageZero = bufferPoolManager.newPage().getPageId();
+        if (pageZero.getPageNum() != 0) {
+            // 如果第一个分配的不是0号页，说明分配器有更严重的问题
+            throw new IllegalStateException("Bootstrap failed: Expected to allocate Page 0, but got Page " + pageZero.getPageNum());
+        }
+        // 2. 分配 Page 1, 给 _catalog_columns
         columnsTableFirstPageId = bufferPoolManager.newPage().getPageId();
         if (columnsTableFirstPageId.getPageNum() != 1) {
-            throw new IllegalStateException("Catalog bootstrap failed: _catalog_columns table was not allocated to Page 1.");
+            // 经过上面的修复，这个异常理论上不会再被触发
+            throw new IllegalStateException("Catalog bootstrap failed: _catalog_columns was not on Page 1, got " + columnsTableFirstPageId.getPageNum());
         }
+        usersTableFirstPageId = bufferPoolManager.newPage().getPageId();
+        privilegesTableFirstPageId = bufferPoolManager.newPage().getPageId();
+
         int tablesTableId = nextTableId.getAndIncrement();
         int columnsTableId = nextTableId.getAndIncrement();
-
-        // 3. 将元数据表的元数据写入 Catalog Tables Table (Page 0)
-        Tuple tablesTableMeta = new Tuple(Arrays.asList(
-                new Value(tablesTableId), new Value(CATALOG_TABLES_TABLE_NAME), new Value(tablesTableFirstPageId.getPageNum())
-        ));
-        Tuple columnsTableMeta = new Tuple(Arrays.asList(
-                new Value(columnsTableId), new Value(CATALOG_COLUMNS_TABLE_NAME), new Value(columnsTableFirstPageId.getPageNum())
-        ));
+        int usersTableId = nextTableId.getAndIncrement();
+        int privilegesTableId = nextTableId.getAndIncrement();
 
         Page tablesPage = bufferPoolManager.getPage(tablesTableFirstPageId);
-        tablesPage.insertTuple(tablesTableMeta);
-        tablesPage.insertTuple(columnsTableMeta);
+        tablesPage.insertTuple(new Tuple(Arrays.asList(new Value(tablesTableId), new Value(CATALOG_TABLES_TABLE_NAME), new Value(tablesTableFirstPageId.getPageNum()))));
+        tablesPage.insertTuple(new Tuple(Arrays.asList(new Value(columnsTableId), new Value(CATALOG_COLUMNS_TABLE_NAME), new Value(columnsTableFirstPageId.getPageNum()))));
+        tablesPage.insertTuple(new Tuple(Arrays.asList(new Value(usersTableId), new Value(CATALOG_USERS_TABLE_NAME), new Value(usersTableFirstPageId.getPageNum()))));
+        tablesPage.insertTuple(new Tuple(Arrays.asList(new Value(privilegesTableId), new Value(CATALOG_PRIVILEGES_TABLE_NAME), new Value(privilegesTableFirstPageId.getPageNum()))));
         bufferPoolManager.flushPage(tablesTableFirstPageId);
 
-        // 4. 将两个元数据表的 Schema 信息写入 Catalog Columns Table
         Page columnsPage = bufferPoolManager.getPage(columnsTableFirstPageId);
-
-        int colIdx = 0;
-        for (Column col : tablesTableSchema.getColumns()) {
-            columnsPage.insertTuple(new Tuple(Arrays.asList(new Value(tablesTableId), new Value(col.getName()), new Value(col.getType().toString()), new Value(colIdx++))));
-        }
-
-        colIdx = 0;
-        for (Column col : columnsTableSchema.getColumns()) {
-            columnsPage.insertTuple(new Tuple(Arrays.asList(new Value(columnsTableId), new Value(col.getName()), new Value(col.getType().toString()), new Value(colIdx++))));
-        }
+        writeSchemaToColumnsTable(columnsPage, tablesTableId, tablesTableSchema);
+        writeSchemaToColumnsTable(columnsPage, columnsTableId, columnsTableSchema);
+        writeSchemaToColumnsTable(columnsPage, usersTableId, usersTableSchema);
+        writeSchemaToColumnsTable(columnsPage, privilegesTableId, privilegesTableSchema);
         bufferPoolManager.flushPage(columnsTableFirstPageId);
 
-        // 5. 将元数据表信息加载到内存
+        Page usersPage = bufferPoolManager.getPage(usersTableFirstPageId);
+        int rootUserId = 0;
+        String rootPassword = "root_password";
+        String rootPasswordHash = hashPassword(rootPassword);
+        usersPage.insertTuple(new Tuple(Arrays.asList(new Value(rootUserId), new Value("root"), new Value(rootPasswordHash))));
+        bufferPoolManager.flushPage(usersTableFirstPageId);
+
+        Page privilegesPage = bufferPoolManager.getPage(privilegesTableFirstPageId);
+        int privilegeId = 0;
+        privilegesPage.insertTuple(new Tuple(Arrays.asList(new Value(privilegeId), new Value(rootUserId), new Value("*"), new Value("ALL"))));
+        bufferPoolManager.flushPage(privilegesTableFirstPageId);
+
         tables.put(CATALOG_TABLES_TABLE_NAME, new TableInfo(CATALOG_TABLES_TABLE_NAME, tablesTableSchema, tablesTableFirstPageId));
         tables.put(CATALOG_COLUMNS_TABLE_NAME, new TableInfo(CATALOG_COLUMNS_TABLE_NAME, columnsTableSchema, columnsTableFirstPageId));
+        tables.put(CATALOG_USERS_TABLE_NAME, new TableInfo(CATALOG_USERS_TABLE_NAME, usersTableSchema, usersTableFirstPageId));
+        tables.put(CATALOG_PRIVILEGES_TABLE_NAME, new TableInfo(CATALOG_PRIVILEGES_TABLE_NAME, privilegesTableSchema, privilegesTableFirstPageId));
+
         tableIds.put(CATALOG_TABLES_TABLE_NAME, tablesTableId);
         tableIds.put(CATALOG_COLUMNS_TABLE_NAME, columnsTableId);
+        tableIds.put(CATALOG_USERS_TABLE_NAME, usersTableId);
+        tableIds.put(CATALOG_PRIVILEGES_TABLE_NAME, privilegesTableId);
+
+        users.put("root", rootPasswordHash.getBytes(StandardCharsets.UTF_8));
+        userPrivileges.put("root", List.of(new PrivilegeInfo("*", "ALL")));
+
+
+
+
+        // --- 手动添加测试用户和权限 ---
+        // 1. 创建 testuser
+        int testUserId = 1;
+        String testPassword = "123";
+        String testPasswordHash = hashPassword(testPassword);
+        usersPage.insertTuple(new Tuple(Arrays.asList(new Value(testUserId), new Value("testuser"), new Value(testPasswordHash))));
+
+        // 2. 创建一个测试表
+        createTable("test_table", new Schema(List.of(new Column("id", DataType.INT))));
+
+        // 3. 授予 testuser 对 test_table 的 SELECT 权限
+        privilegesPage.insertTuple(new Tuple(Arrays.asList(
+                new Value(2), // privilege_id
+                new Value(testUserId),
+                new Value("test_table"),
+                new Value("SELECT")
+        )));
+
+        bufferPoolManager.flushPage(usersPage.getPageId());
+        bufferPoolManager.flushPage(privilegesPage.getPageId());
+
+        // --- 核心修复：将 testuser 的信息也加载到内存缓存中 ---
+        users.put("testuser", testPasswordHash.getBytes(StandardCharsets.UTF_8));
+        userPrivileges.put("testuser", List.of(new PrivilegeInfo("test_table", "SELECT")));
+        System.out.println("[Bootstrap] Manually created 'testuser' and loaded into memory cache.");
+    }
+
+    private void writeSchemaToColumnsTable(Page columnsPage, int tableId, Schema schema) {
+        int colIdx = 0;
+        for (Column col : schema.getColumns()) {
+            columnsPage.insertTuple(new Tuple(Arrays.asList(
+                    new Value(tableId),
+                    new Value(col.getName()),
+                    new Value(col.getType().toString()),
+                    new Value(colIdx++)
+            )));
+        }
+    }
+
+    private String hashPassword(String password) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] encodedhash = digest.digest(password.getBytes(StandardCharsets.UTF_8));
+            return Base64.getEncoder().encodeToString(encodedhash);
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("SHA-256 algorithm not found", e);
+        }
     }
 
     public TableInfo createTable(String tableName, Schema schema) throws IOException {
@@ -378,4 +504,51 @@ public class Catalog {
             System.out.println("[Catalog] Dropped index metadata '" + indexName + "' for table '" + tableName + "'.");
         }
     }
+
+    // 内部类用于在内存中表示权限
+    public static class PrivilegeInfo {
+        String tableName;
+        String privilegeType;
+
+        PrivilegeInfo(String tableName, String privilegeType) {
+            this.tableName = tableName;
+            this.privilegeType = privilegeType;
+        }
+    }
+
+    /**
+     * @param username 用户名
+     * @return 密码的哈希字节数组，如果用户不存在则返回 null。
+     */
+    public byte[] getPasswordHash(String username) {
+        return users.get(username);
+    }
+
+    /**
+     * @param username       用户名
+     * @param tableName      要操作的表名
+     * @param privilegeType  请求的权限类型 (e.g., "SELECT", "INSERT")
+     * @return 如果有权限则返回 true，否则返回 false。
+     */
+    public boolean hasPermission(String username, String tableName, String privilegeType) {
+        if (username == null) {
+            return false; // 未登录用户没有任何权限
+        }
+
+        List<PrivilegeInfo> privileges = userPrivileges.get(username);
+        if (privileges == null) {
+            return false; // 该用户没有任何权限记录
+        }
+        // 检查用户是否对所有表有 ALL 权限 (超级用户)
+        if (privileges.stream().anyMatch(p -> p.tableName.equals("*") && p.privilegeType.equalsIgnoreCase("ALL"))) {
+            return true;
+        }
+        // 检查用户是否对该特定表有 ALL 权限
+        if (privileges.stream().anyMatch(p -> p.tableName.equalsIgnoreCase(tableName) && p.privilegeType.equalsIgnoreCase("ALL"))) {
+            return true;
+        }
+        // 检查用户是否对该特定表有具体的操作权限
+        return privileges.stream().anyMatch(p -> p.tableName.equalsIgnoreCase(tableName) && p.privilegeType.equalsIgnoreCase(privilegeType));
+    }
 }
+

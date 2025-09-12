@@ -1,5 +1,6 @@
 package org.csu.sdolp.cli;
 
+import org.csu.sdolp.catalog.Catalog;
 import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.engine.QueryProcessor;
@@ -11,6 +12,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -25,6 +28,8 @@ public class MysqlProtocolHandler implements Runnable {
     private final Socket clientSocket;
     private final QueryProcessor queryProcessor;
     private final int connectionId;
+    private final Catalog catalog;
+    private Session session;
 
     // MySQL Protocol Constants
     private static final int CLIENT_PROTOCOL_41 = 0x00000200;
@@ -42,10 +47,12 @@ public class MysqlProtocolHandler implements Runnable {
         }
     }
 
-    public MysqlProtocolHandler(Socket clientSocket, QueryProcessor queryProcessor, int connectionId) {
+    public MysqlProtocolHandler(Socket clientSocket, QueryProcessor queryProcessor, Catalog catalog, int connectionId) {
         this.clientSocket = clientSocket;
         this.queryProcessor = queryProcessor;
+        this.catalog = catalog; // 初始化 Catalog
         this.connectionId = connectionId;
+        this.session = new Session(connectionId); // 初始化一个未认证的 Session
     }
 
     @Override
@@ -54,40 +61,39 @@ public class MysqlProtocolHandler implements Runnable {
         try (InputStream in = clientSocket.getInputStream();
              OutputStream out = clientSocket.getOutputStream()) {
 
-            // Send initial handshake
-            int serverSequenceId = 0;
-            serverSequenceId = sendHandshake(out, serverSequenceId);
+            // 1. 发送握手包
+            byte[] salt = sendHandshake(out, 0);
             System.out.println("Sent handshake packet to client.");
 
-            // Read authentication response
+            // 2. 读取客户端认证响应
             Packet authPacket = readPacket(in);
             if (authPacket == null) {
                 System.err.println("Client disconnected after handshake.");
                 return;
             }
 
-            // Debug: Print auth packet info
-            System.out.println("Received authentication packet from client, size: " + authPacket.payload.length);
-
-            // Parse client capabilities (optional, for debugging)
-            if (authPacket.payload.length >= 4) {
-                int clientCapabilities = (authPacket.payload[0] & 0xFF) |
-                        ((authPacket.payload[1] & 0xFF) << 8) |
-                        ((authPacket.payload[2] & 0xFF) << 16) |
-                        ((authPacket.payload[3] & 0xFF) << 24);
-                System.out.println("Client capabilities: 0x" + Integer.toHexString(clientCapabilities));
+            // *** 3. 核心认证逻辑 ***
+            if (!authenticate(authPacket, salt, out)) {
+                System.err.println("Authentication failed for connection ID: " + connectionId);
+                // authenticate 方法内部已经发送了错误信息，这里直接返回即可
+                return;
             }
 
-            // Send OK packet (fake successful authentication)
-            serverSequenceId = authPacket.sequenceId + 1;
-            serverSequenceId = sendOkPacket(out, serverSequenceId, 0, 0);
-            System.out.println("Sent OK packet to client, authentication successful.");
+            // 如果认证成功，session 已经被更新
+            System.out.println("User '" + session.getUsername() + "' authenticated successfully for connection ID: " + connectionId);
 
-            // Main command loop
+            // 4. 发送 OK 包表示认证成功
+            sendOkPacket(out, authPacket.sequenceId + 1, 0, 0);
+
+            // 5. 主命令循环
             while (!clientSocket.isClosed()) {
                 Packet commandPacket = readPacket(in);
-                if (commandPacket == null) {
-                    break;
+                if (commandPacket == null) break;
+
+                // 在处理命令之前，检查是否已认证
+                if (!session.isAuthenticated()) {
+                    sendErrorPacket(out, 1, 1045, "28000", "Access denied. Please log in.");
+                    continue;
                 }
                 handleCommand(commandPacket, out);
             }
@@ -101,73 +107,95 @@ public class MysqlProtocolHandler implements Runnable {
             e.printStackTrace();
         } finally {
             try {
-                if (!clientSocket.isClosed()) {
-                    clientSocket.close();
-                }
-                System.out.println("Client disconnected: " + clientSocket.getInetAddress());
+                if (!clientSocket.isClosed()) clientSocket.close();
+                System.out.println("Client disconnected: " + session.getUsername() + "@" + clientSocket.getInetAddress());
             } catch (IOException e) {
-                // Ignore close errors
+                // Ignore
             }
         }
     }
 
-    private int sendHandshake(OutputStream out, int sequenceId) throws IOException {
+    private boolean authenticate(Packet authPacket, byte[] salt, OutputStream out) throws IOException, NoSuchAlgorithmException {
+        // 解析用户名
+        int pos = 4 + 4 + 1 + 23;
+        int userStart = -1;
+        for (int i = pos; i < authPacket.payload.length; i++) {
+            if (authPacket.payload[i] != 0) {
+                userStart = i;
+                break;
+            }
+        }
+        if (userStart == -1) return false;
+
+        int userEnd = -1;
+        for (int i = userStart; i < authPacket.payload.length; i++) {
+            if (authPacket.payload[i] == 0) {
+                userEnd = i;
+                break;
+            }
+        }
+        if (userEnd == -1) return false;
+
+        String username = new String(authPacket.payload, userStart, userEnd - userStart, StandardCharsets.UTF_8);
+
+        // --- 核心修复 ---
+        // 从 Catalog 获取该用户的密码哈希，以此判断用户是否存在
+        byte[] storedPasswordHash = catalog.getPasswordHash(username);
+
+        if (storedPasswordHash != null) {
+            // 在我们的简化模型中，只要用户存在于 Catalog 中，我们就认为认证成功。
+            // 一个真正的数据库在这里会进行复杂的密码哈希比对。
+
+            // 认证成功，更新 Session
+            this.session = Session.createAuthenticatedSession(this.connectionId, username);
+            System.out.println("Simplified authentication successful for user: '" + username + "'");
+            return true;
+        } else {
+            // 如果在 Catalog 中找不到用户，则认证失败
+            System.err.println("Authentication failed: User '" + username + "' not found in catalog.");
+            sendErrorPacket(out, authPacket.sequenceId + 1, 1045, "28000", "Access denied for user '" + username + "'");
+            return false;
+        }
+    }
+
+    private byte[] sendHandshake(OutputStream out, int sequenceId) throws IOException {
         ByteArrayOutputStream packet = new ByteArrayOutputStream();
-
-        // 1. Protocol version (1 byte)
         packet.write(10);
-
-        // 2. ServerRemote version string (null-terminated)
         String serverVersion = "8.0.28-minidb";
         packet.write(serverVersion.getBytes(StandardCharsets.UTF_8));
         packet.write(0);
-
-        // 3. Connection ID (4 bytes)
         packet.write(writeInt(connectionId, 4));
 
-        // 4. Auth plugin data part 1 (8 bytes)
         byte[] salt1 = new byte[8];
         new Random().nextBytes(salt1);
         packet.write(salt1);
-
-        // 5. Filler (1 byte)
         packet.write(0);
 
-        // 6. Capability flags (lower 2 bytes)
-        // Important: Use correct capability flags for MySQL 8.0
-        int capabilityFlags = 0xffffff7f; // Standard MySQL 8.0 capabilities
+        int capabilityFlags = 0xffffff7f;
         packet.write(capabilityFlags & 0xFF);
         packet.write((capabilityFlags >> 8) & 0xFF);
-
-        // 7. Character set (1 byte)
-        packet.write(0xff); // utf8mb4_0900_ai_ci (default for MySQL 8.0)
-
-        // 8. Status flags (2 bytes)
-        packet.write(0x02); // SERVER_STATUS_AUTOCOMMIT
+        packet.write(0xff);
+        packet.write(0x02);
         packet.write(0x00);
-
-        // 9. Capability flags (upper 2 bytes)
         packet.write((capabilityFlags >> 16) & 0xFF);
         packet.write((capabilityFlags >> 24) & 0xFF);
-
-        // 10. Length of auth plugin data (1 byte)
-        packet.write(21); // 8 + 13 = 21
-
-        // 11. Reserved (10 bytes)
+        packet.write(21);
         packet.write(new byte[10]);
-
-        // 12. Auth plugin data part 2 (minimum 13 bytes including terminator)
         byte[] salt2 = new byte[12];
         new Random().nextBytes(salt2);
         packet.write(salt2);
         packet.write(0);
-
-        // 13. Auth plugin name (null-terminated)
         String authPlugin = "mysql_native_password";
         packet.write(authPlugin.getBytes(StandardCharsets.UTF_8));
         packet.write(0);
 
-        return writePacket(out, packet.toByteArray(), sequenceId);
+        writePacket(out, packet.toByteArray(), sequenceId);
+
+        // 返回完整的 salt
+        byte[] fullSalt = new byte[salt1.length + salt2.length];
+        System.arraycopy(salt1, 0, fullSalt, 0, salt1.length);
+        System.arraycopy(salt2, 0, fullSalt, salt1.length, salt2.length);
+        return fullSalt;
     }
 
     private void handleCommand(Packet commandPacket, OutputStream out) throws Exception {
@@ -214,7 +242,7 @@ public class MysqlProtocolHandler implements Runnable {
                     txn = transactionManager.begin();
 
                     // 2. 调用新的方法，在当前事务中执行查询
-                    TupleIterator iterator = queryProcessor.createExecutorForQuery(sql, txn);
+                    TupleIterator iterator = queryProcessor.createExecutorForQuery(sql, txn, this.session);
 
                     // 3. 判断是返回结果集 (SELECT) 还是只返回OK (INSERT/UPDATE/CREATE...)
                     if (iterator == null || iterator.getOutputSchema() == null ||
