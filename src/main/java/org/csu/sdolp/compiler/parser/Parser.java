@@ -28,18 +28,18 @@ public class Parser {
     }
 
     public StatementNode parse() {
-        if (isAtEnd()) {
+        if (peek().type() == TokenType.EOF) {
             return null;
         }
+
         StatementNode statement = parseStatement();
 
-        if (!isAtEnd() && peek().type() == TokenType.SEMICOLON) {
-            consume(TokenType.SEMICOLON, "';' at the end of statement");
+        consume(TokenType.SEMICOLON, "Expected ';' at the end of the statement");
+        if (!isAtEnd()) {
+            throw new ParseException(peek(), "Unexpected tokens after semicolon");
         }
-
         return statement;
     }
-
     private StatementNode parseStatement() {
         if (check(TokenType.CREATE)) {
             Token nextToken = tokens.get(position + 1);
