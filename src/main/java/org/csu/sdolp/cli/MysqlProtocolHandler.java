@@ -15,11 +15,21 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
+/**
+ * 负责处理与 MySQL 客户端（如 Navicat）的底层网络协议交互。
+ */
 public class MysqlProtocolHandler implements Runnable {
 
     private final Socket clientSocket;
     private final QueryProcessor queryProcessor;
     private final int connectionId;
+
+    // MySQL Protocol Constants
+    private static final int CLIENT_PROTOCOL_41 = 0x00000200;
+    private static final int CLIENT_SECURE_CONNECTION = 0x00008000;
+    private static final int CLIENT_PLUGIN_AUTH = 0x00080000;
+    private static final int CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = 0x00200000;
+    private static final int CLIENT_DEPRECATE_EOF = 0x01000000;
 
     private static class Packet {
         final int sequenceId;
@@ -42,23 +52,36 @@ public class MysqlProtocolHandler implements Runnable {
         try (InputStream in = clientSocket.getInputStream();
              OutputStream out = clientSocket.getOutputStream()) {
 
+            // Send initial handshake
             int serverSequenceId = 0;
-
             serverSequenceId = sendHandshake(out, serverSequenceId);
             System.out.println("Sent handshake packet to client.");
 
+            // Read authentication response
             Packet authPacket = readPacket(in);
-
             if (authPacket == null) {
-                System.err.println("Client disconnected after handshake. Handshake packet might be incompatible.");
+                System.err.println("Client disconnected after handshake.");
                 return;
             }
-            System.out.println("Received authentication packet from client.");
 
+            // Debug: Print auth packet info
+            System.out.println("Received authentication packet from client, size: " + authPacket.payload.length);
+
+            // Parse client capabilities (optional, for debugging)
+            if (authPacket.payload.length >= 4) {
+                int clientCapabilities = (authPacket.payload[0] & 0xFF) |
+                        ((authPacket.payload[1] & 0xFF) << 8) |
+                        ((authPacket.payload[2] & 0xFF) << 16) |
+                        ((authPacket.payload[3] & 0xFF) << 24);
+                System.out.println("Client capabilities: 0x" + Integer.toHexString(clientCapabilities));
+            }
+
+            // Send OK packet (fake successful authentication)
             serverSequenceId = authPacket.sequenceId + 1;
             serverSequenceId = sendOkPacket(out, serverSequenceId, 0, 0);
-            System.out.println("Sent OK packet to client, faking successful authentication.");
+            System.out.println("Sent OK packet to client, authentication successful.");
 
+            // Main command loop
             while (!clientSocket.isClosed()) {
                 Packet commandPacket = readPacket(in);
                 if (commandPacket == null) {
@@ -68,7 +91,7 @@ public class MysqlProtocolHandler implements Runnable {
             }
 
         } catch (IOException e) {
-            if (!e.getMessage().contains("Connection reset by peer") && !e.getMessage().contains("Socket closed")) {
+            if (!e.getMessage().contains("Connection reset") && !e.getMessage().contains("Socket closed")) {
                 System.err.println("Error handling client connection " + connectionId + ": " + e.getMessage());
             }
         } catch (Exception e) {
@@ -76,129 +99,253 @@ public class MysqlProtocolHandler implements Runnable {
             e.printStackTrace();
         } finally {
             try {
-                if (!clientSocket.isClosed()) clientSocket.close();
+                if (!clientSocket.isClosed()) {
+                    clientSocket.close();
+                }
                 System.out.println("Client disconnected: " + clientSocket.getInetAddress());
-            } catch (IOException e) { /* ignore */ }
+            } catch (IOException e) {
+                // Ignore close errors
+            }
         }
     }
 
     private int sendHandshake(OutputStream out, int sequenceId) throws IOException {
-        byte[] protocolVersion = {10};
-        byte[] serverVersion = "8.0.28-minidb".getBytes(StandardCharsets.UTF_8);
-        byte[] connectionIdBytes = writeInt(connectionId, 4);
+        ByteArrayOutputStream packet = new ByteArrayOutputStream();
+
+        // 1. Protocol version (1 byte)
+        packet.write(10);
+
+        // 2. Server version string (null-terminated)
+        String serverVersion = "8.0.28-minidb";
+        packet.write(serverVersion.getBytes(StandardCharsets.UTF_8));
+        packet.write(0);
+
+        // 3. Connection ID (4 bytes)
+        packet.write(writeInt(connectionId, 4));
+
+        // 4. Auth plugin data part 1 (8 bytes)
         byte[] salt1 = new byte[8];
         new Random().nextBytes(salt1);
+        packet.write(salt1);
+
+        // 5. Filler (1 byte)
+        packet.write(0);
+
+        // 6. Capability flags (lower 2 bytes)
+        // Important: Use correct capability flags for MySQL 8.0
+        int capabilityFlags = 0xffffff7f; // Standard MySQL 8.0 capabilities
+        packet.write(capabilityFlags & 0xFF);
+        packet.write((capabilityFlags >> 8) & 0xFF);
+
+        // 7. Character set (1 byte)
+        packet.write(0xff); // utf8mb4_0900_ai_ci (default for MySQL 8.0)
+
+        // 8. Status flags (2 bytes)
+        packet.write(0x02); // SERVER_STATUS_AUTOCOMMIT
+        packet.write(0x00);
+
+        // 9. Capability flags (upper 2 bytes)
+        packet.write((capabilityFlags >> 16) & 0xFF);
+        packet.write((capabilityFlags >> 24) & 0xFF);
+
+        // 10. Length of auth plugin data (1 byte)
+        packet.write(21); // 8 + 13 = 21
+
+        // 11. Reserved (10 bytes)
+        packet.write(new byte[10]);
+
+        // 12. Auth plugin data part 2 (minimum 13 bytes including terminator)
         byte[] salt2 = new byte[12];
         new Random().nextBytes(salt2);
+        packet.write(salt2);
+        packet.write(0);
 
-        int capabilityFlagsInt = 0xf7ff;
-        byte[] capabilitiesBytes = writeInt(capabilityFlagsInt, 4);
-        byte characterSet = 33;
-        byte[] statusFlags = {2, 0};
-        byte[] authPluginName = "mysql_native_password".getBytes(StandardCharsets.UTF_8);
+        // 13. Auth plugin name (null-terminated)
+        String authPlugin = "mysql_native_password";
+        packet.write(authPlugin.getBytes(StandardCharsets.UTF_8));
+        packet.write(0);
 
-        ByteArrayOutputStream packetStream = new ByteArrayOutputStream();
-        packetStream.write(protocolVersion);
-        packetStream.write(serverVersion);
-        packetStream.write(0);
-        packetStream.write(connectionIdBytes);
-        packetStream.write(salt1);
-        packetStream.write(0);
-        packetStream.write(capabilitiesBytes, 0, 2);
-        packetStream.write(characterSet);
-        packetStream.write(statusFlags);
-        packetStream.write(capabilitiesBytes, 2, 2);
-
-        // *** 核心修复：正确写入盐值长度 ***
-        packetStream.write((byte) (salt1.length + salt2.length)); // <<-- 这里不再是0，而是20！
-
-        packetStream.write(new byte[10]);
-        // 为了兼容某些客户端，盐值第二部分需要补一个NULL结尾符
-        packetStream.write(salt2, 0, 11);
-        packetStream.write(0);
-
-        packetStream.write(authPluginName);
-        packetStream.write(0);
-
-        return writePacket(out, packetStream.toByteArray(), sequenceId);
+        return writePacket(out, packet.toByteArray(), sequenceId);
     }
 
     private void handleCommand(Packet commandPacket, OutputStream out) throws Exception {
+        if (commandPacket.payload.length == 0) {
+            return;
+        }
+
         int commandType = commandPacket.payload[0] & 0xFF;
         int serverSequenceId = 1;
 
+        System.out.println("Received command type: 0x" + Integer.toHexString(commandType));
+
         switch (commandType) {
+            case 0x00: // COM_SLEEP
+                // Do nothing
+                break;
+
+            case 0x01: // COM_QUIT
+                System.out.println("Client sent QUIT command");
+                clientSocket.close();
+                break;
+
+            case 0x02: // COM_INIT_DB
+                String dbName = new String(commandPacket.payload, 1, commandPacket.payload.length - 1, StandardCharsets.UTF_8);
+                System.out.println("Client wants to use database: " + dbName);
+                sendOkPacket(out, serverSequenceId, 0, 0);
+                break;
+
             case 0x03: // COM_QUERY
                 String sql = new String(commandPacket.payload, 1, commandPacket.payload.length - 1, StandardCharsets.UTF_8);
-                if (sql.toLowerCase().startsWith("set names") || sql.toLowerCase().contains("@@")) {
-                    sendOkPacket(out, 0, 0, 0);
+                System.out.println("Received SQL query: " + sql);
+
+                // Handle special MySQL client queries
+                if (handleSpecialQuery(sql, out, serverSequenceId)) {
                     return;
                 }
-                System.out.println("Received SQL query: " + sql);
+
                 try {
                     TupleIterator iterator = queryProcessor.executeMysql(sql);
 
                     if (iterator == null || iterator.getOutputSchema() == null) {
-                        sendOkPacket(out, serverSequenceId, 1, 0);
+                        sendOkPacket(out, serverSequenceId, 0, 0);
                         return;
                     }
 
                     Schema schema = iterator.getOutputSchema();
                     List<Tuple> results = new ArrayList<>();
-                    while(iterator.hasNext()){
+                    while (iterator.hasNext()) {
                         results.add(iterator.next());
                     }
 
+                    // Send result set
                     serverSequenceId = sendResultSetHeader(out, serverSequenceId, schema.getColumns().size());
                     serverSequenceId = sendFieldPackets(out, serverSequenceId, schema);
+                    serverSequenceId = sendEofPacket(out, serverSequenceId);
+
                     if (!results.isEmpty()) {
                         serverSequenceId = sendRowPackets(out, serverSequenceId, results);
                     }
                     sendEofPacket(out, serverSequenceId);
 
                 } catch (Exception e) {
-                    e.printStackTrace();
-                    sendErrorPacket(out, serverSequenceId, 1064, "42000", e.getMessage());
+                    System.err.println("Error executing query: " + e.getMessage());
+                    sendErrorPacket(out, serverSequenceId, 1064, "42000",
+                            "You have an error in your SQL syntax: " + e.getMessage());
                 }
                 break;
-            case 0x01: // COM_QUIT
-                clientSocket.close();
+
+            case 0x04: // COM_FIELD_LIST
+                // Return empty field list
+                sendEofPacket(out, serverSequenceId);
                 break;
+
+            case 0x05: // COM_CREATE_DB
+            case 0x06: // COM_DROP_DB
+            case 0x07: // COM_REFRESH
+            case 0x08: // COM_SHUTDOWN
+            case 0x09: // COM_STATISTICS
+            case 0x0a: // COM_PROCESS_INFO
+            case 0x0b: // COM_CONNECT
+            case 0x0c: // COM_PROCESS_KILL
+            case 0x0d: // COM_DEBUG
+            case 0x0e: // COM_PING
+                sendOkPacket(out, serverSequenceId, 0, 0);
+                break;
+
             default:
-                sendErrorPacket(out, serverSequenceId, 1045, "HY000", "Command not supported yet");
+                System.err.println("Unsupported command: 0x" + Integer.toHexString(commandType));
+                sendErrorPacket(out, serverSequenceId, 1047, "08S01",
+                        "Unknown command: 0x" + Integer.toHexString(commandType));
                 break;
         }
+    }
+
+    private boolean handleSpecialQuery(String sql, OutputStream out, int sequenceId) throws IOException {
+        String sqlLower = sql.toLowerCase().trim();
+
+        // Handle SET statements
+        if (sqlLower.startsWith("set ")) {
+            sendOkPacket(out, sequenceId, 0, 0);
+            return true;
+        }
+
+        // Handle SHOW statements
+        if (sqlLower.startsWith("show ")) {
+            if (sqlLower.contains("databases")) {
+                // Return empty database list
+                sendResultSetHeader(out, sequenceId, 1);
+                sendSimpleFieldPacket(out, sequenceId + 1, "Database");
+                sendEofPacket(out, sequenceId + 2);
+                sendEofPacket(out, sequenceId + 3);
+                return true;
+            } else if (sqlLower.contains("tables")) {
+                // Return empty table list
+                sendResultSetHeader(out, sequenceId, 1);
+                sendSimpleFieldPacket(out, sequenceId + 1, "Tables");
+                sendEofPacket(out, sequenceId + 2);
+                sendEofPacket(out, sequenceId + 3);
+                return true;
+            }
+        }
+
+        // Handle SELECT @@variable queries
+        if (sqlLower.contains("@@")) {
+            sendOkPacket(out, sequenceId, 0, 0);
+            return true;
+        }
+
+        return false;
+    }
+
+    private int sendSimpleFieldPacket(OutputStream out, int sequenceId, String fieldName) throws IOException {
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        bos.write(writeLengthEncodedString("def"));
+        bos.write(writeLengthEncodedString(""));
+        bos.write(writeLengthEncodedString(""));
+        bos.write(writeLengthEncodedString(""));
+        bos.write(writeLengthEncodedString(fieldName));
+        bos.write(writeLengthEncodedString(fieldName));
+        bos.write(0x0c);
+        bos.write(writeInt(33, 2));
+        bos.write(writeInt(255, 4));
+        bos.write((byte) 0xfd);
+        bos.write(writeInt(0, 2));
+        bos.write((byte) 0x00);
+        bos.write(new byte[2]);
+        return writePacket(out, bos.toByteArray(), sequenceId);
     }
 
     private int sendResultSetHeader(OutputStream out, int sequenceId, int fieldCount) throws IOException {
         return writePacket(out, writeLengthEncodedInt(fieldCount), sequenceId);
     }
+
     private int sendFieldPackets(OutputStream out, int sequenceId, Schema schema) throws IOException {
         for (org.csu.sdolp.common.model.Column col : schema.getColumns()) {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            bos.write(writeLengthEncodedString("def"));
-            bos.write(writeLengthEncodedString(""));
-            bos.write(writeLengthEncodedString(col.getName()));
-            bos.write(writeLengthEncodedString(col.getName()));
-            bos.write(writeLengthEncodedString(col.getName()));
-            bos.write(writeLengthEncodedString(col.getName()));
-            bos.write(0x0c);
-            bos.write(writeInt(33, 2));
-            bos.write(writeInt(1024, 4));
-            bos.write((byte) 0xfd);
-            bos.write(writeInt(0, 2));
-            bos.write((byte) 0x00);
-            bos.write(new byte[2]);
+            bos.write(writeLengthEncodedString("def"));           // catalog
+            bos.write(writeLengthEncodedString("minidb"));        // database
+            bos.write(writeLengthEncodedString(""));              // table
+            bos.write(writeLengthEncodedString(""));              // org_table
+            bos.write(writeLengthEncodedString(col.getName()));   // name
+            bos.write(writeLengthEncodedString(col.getName()));   // org_name
+            bos.write(0x0c);                                      // length of fixed fields
+            bos.write(writeInt(33, 2));                          // character set
+            bos.write(writeInt(1024, 4));                        // column length
+            bos.write((byte) 0xfd);                              // type (VARCHAR)
+            bos.write(writeInt(0, 2));                           // flags
+            bos.write((byte) 0x00);                              // decimals
+            bos.write(new byte[2]);                              // filler
             sequenceId = writePacket(out, bos.toByteArray(), sequenceId);
         }
-        return sendEofPacket(out, sequenceId);
+        return sequenceId;
     }
+
     private int sendRowPackets(OutputStream out, int sequenceId, List<Tuple> tuples) throws IOException {
         for (Tuple tuple : tuples) {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             for (org.csu.sdolp.common.model.Value val : tuple.getValues()) {
                 if (val.getValue() == null) {
-                    bos.write(0xfb);
+                    bos.write(0xfb); // NULL value
                 } else {
                     bos.write(writeLengthEncodedString(val.getValue().toString()));
                 }
@@ -207,30 +354,41 @@ public class MysqlProtocolHandler implements Runnable {
         }
         return sequenceId;
     }
+
     private int sendEofPacket(OutputStream out, int sequenceId) throws IOException {
-        byte[] eofPacket = { (byte) 0xfe, 0x00, 0x00, 0x02, 0x00 };
+        byte[] eofPacket = {(byte) 0xfe, 0x00, 0x00, 0x02, 0x00};
         return writePacket(out, eofPacket, sequenceId);
     }
+
     private Packet readPacket(InputStream in) throws IOException {
         byte[] header = new byte[4];
         int n = in.read(header);
         if (n < 4) {
             return null;
         }
-        int payloadLength = (header[0] & 0xFF) | ((header[1] & 0xFF) << 8) | ((header[2] & 0xFF) << 16);
+
+        int payloadLength = (header[0] & 0xFF) |
+                ((header[1] & 0xFF) << 8) |
+                ((header[2] & 0xFF) << 16);
         int sequenceId = header[3] & 0xFF;
+
         if (payloadLength == 0) {
             return new Packet(sequenceId, new byte[0]);
         }
+
         byte[] payload = new byte[payloadLength];
         int bytesRead = 0;
-        while(bytesRead < payloadLength) {
+        while (bytesRead < payloadLength) {
             int read = in.read(payload, bytesRead, payloadLength - bytesRead);
-            if (read == -1) throw new IOException("Incomplete packet read");
+            if (read == -1) {
+                throw new IOException("Incomplete packet read");
+            }
             bytesRead += read;
         }
+
         return new Packet(sequenceId, payload);
     }
+
     private int writePacket(OutputStream out, byte[] payload, int sequenceId) throws IOException {
         int payloadLength = payload.length;
         out.write(payloadLength & 0xFF);
@@ -241,32 +399,29 @@ public class MysqlProtocolHandler implements Runnable {
         out.flush();
         return sequenceId + 1;
     }
+
     private int sendOkPacket(OutputStream out, int sequenceId, int affectedRows, int lastInsertId) throws IOException {
-        byte[] okHeader = {0x00};
-        byte[] statusFlags = {0x02, 0x00};
-        byte[] warnings = {0x00, 0x00};
-        ByteArrayOutputStream packetStream = new ByteArrayOutputStream();
-        packetStream.write(okHeader);
-        packetStream.write(writeLengthEncodedInt(affectedRows));
-        packetStream.write(writeLengthEncodedInt(lastInsertId));
-        packetStream.write(statusFlags);
-        packetStream.write(warnings);
-        return writePacket(out, packetStream.toByteArray(), sequenceId);
+        ByteArrayOutputStream packet = new ByteArrayOutputStream();
+        packet.write(0x00); // OK header
+        packet.write(writeLengthEncodedInt(affectedRows));
+        packet.write(writeLengthEncodedInt(lastInsertId));
+        packet.write(0x02); // SERVER_STATUS_AUTOCOMMIT
+        packet.write(0x00);
+        packet.write(0x00); // warnings
+        packet.write(0x00);
+        return writePacket(out, packet.toByteArray(), sequenceId);
     }
+
     private int sendErrorPacket(OutputStream out, int sequenceId, int errorCode, String sqlState, String message) throws IOException {
-        byte[] errorHeader = {(byte) 0xFF};
-        byte[] errorCodeBytes = writeInt(errorCode, 2);
-        byte[] sqlStateMarker = {'#'};
-        byte[] sqlStateBytes = sqlState.getBytes(StandardCharsets.UTF_8);
-        byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
-        ByteArrayOutputStream packetStream = new ByteArrayOutputStream();
-        packetStream.write(errorHeader);
-        packetStream.write(errorCodeBytes);
-        packetStream.write(sqlStateMarker);
-        packetStream.write(sqlStateBytes);
-        packetStream.write(messageBytes);
-        return writePacket(out, packetStream.toByteArray(), sequenceId);
+        ByteArrayOutputStream packet = new ByteArrayOutputStream();
+        packet.write(0xFF); // Error header
+        packet.write(writeInt(errorCode, 2));
+        packet.write('#');
+        packet.write(sqlState.getBytes(StandardCharsets.UTF_8));
+        packet.write(message.getBytes(StandardCharsets.UTF_8));
+        return writePacket(out, packet.toByteArray(), sequenceId);
     }
+
     private byte[] writeInt(int value, int length) {
         byte[] bytes = new byte[length];
         for (int i = 0; i < length; i++) {
@@ -274,13 +429,21 @@ public class MysqlProtocolHandler implements Runnable {
         }
         return bytes;
     }
+
     private byte[] writeLengthEncodedInt(long n) {
-        if (n < 251) return new byte[]{(byte) n};
-        if (n < 65536) return new byte[]{(byte) 0xfc, (byte) (n), (byte) (n >> 8)};
-        if (n < 16777216) return new byte[]{(byte) 0xfd, (byte) (n), (byte) (n >> 8), (byte) (n >> 16)};
-        return new byte[]{(byte) 0xfe, (byte) (n), (byte) (n >> 8), (byte) (n >> 16), (byte) (n >> 24),
+        if (n < 251) {
+            return new byte[]{(byte) n};
+        }
+        if (n < 65536) {
+            return new byte[]{(byte) 0xfc, (byte) n, (byte) (n >> 8)};
+        }
+        if (n < 16777216) {
+            return new byte[]{(byte) 0xfd, (byte) n, (byte) (n >> 8), (byte) (n >> 16)};
+        }
+        return new byte[]{(byte) 0xfe, (byte) n, (byte) (n >> 8), (byte) (n >> 16), (byte) (n >> 24),
                 (byte) (n >> 32), (byte) (n >> 40), (byte) (n >> 48), (byte) (n >> 56)};
     }
+
     private byte[] writeLengthEncodedString(String s) throws IOException {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         byte[] data = s.getBytes(StandardCharsets.UTF_8);
