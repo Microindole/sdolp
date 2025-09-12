@@ -47,7 +47,9 @@ public class SemanticAnalyzer {
             analyzeDropTable(dropTable, session);
         } else if (node instanceof AlterTableStatementNode alterTable) {
             analyzeAlterTable(alterTable, session);
-        }  else if (node instanceof CreateUserStatementNode createUser) {
+        } else if (node instanceof ShowTablesStatementNode) { //
+            analyzeShowTables((ShowTablesStatementNode) node);
+        } else if (node instanceof CreateUserStatementNode createUser) {
             analyzeCreateUser(createUser, session);
         } else if (node instanceof GrantStatementNode grant) {
             analyzeGrant(grant, session);
@@ -101,6 +103,11 @@ public class SemanticAnalyzer {
             // 但如果确实需要处理，可以抛出一个特定的异常
             throw new SemanticException("Failed to pre-apply grant in memory: " + e.getMessage());
         }
+    }
+
+    private void analyzeShowTables(ShowTablesStatementNode node) {
+        // SHOW TABLES 语句没有复杂的语义需要检查
+        // 所以这个方法体可以为空
     }
 
     private void analyzeCreateTable(CreateTableStatementNode node,Session session) {

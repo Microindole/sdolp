@@ -56,6 +56,8 @@ public class Lexer {
         keywords.put("avg", TokenType.AVG);
         keywords.put("min", TokenType.MIN);
         keywords.put("max", TokenType.MAX);
+        keywords.put("show", TokenType.SHOW); // show
+        keywords.put("tables", TokenType.TABLES); // tables
         keywords.put("user", TokenType.USER);
         keywords.put("identified", TokenType.IDENTIFIED);
         keywords.put("grant", TokenType.GRANT);

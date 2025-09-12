@@ -105,7 +105,10 @@ public class ExecutionEngine {
             TableHeap tableHeap = new TableHeap(bufferPoolManager, indexScanPlan.getTableInfo(), logManager, lockManager);
             return new IndexScanExecutor(indexScanPlan, tableHeap, bufferPoolManager, txn);
         }
-
+        //show修改
+        if (plan instanceof ShowTablesPlanNode showTablesPlan) {
+            return new ShowTablesExecutor(showTablesPlan, catalog);
+        }
         // --- DDL Executors ---
         if (plan instanceof CreateTablePlanNode createTablePlan) {
             // *** 核心修复点 1：为 DDL 执行器传入 txn 和 logManager ***

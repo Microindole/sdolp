@@ -61,6 +61,9 @@ public class Parser {
         if (match(TokenType.GRANT)) {
             return parseGrantStatement();
         }
+        if (match(TokenType.SHOW)) {
+            return parseShowTablesStatement();
+        }
         if (match(TokenType.SELECT)) {
             return parseSelectStatement();
         }
@@ -112,6 +115,11 @@ public class Parser {
         consume(TokenType.TO, "'TO' keyword");
         IdentifierNode username = new IdentifierNode(consume(TokenType.STRING_CONST, "username as a string literal").lexeme());
         return new GrantStatementNode(privileges, tableName, username);
+    }
+
+    private StatementNode parseShowTablesStatement() {
+        consume(TokenType.TABLES, "Expected 'TABLES' after 'SHOW'");
+        return new ShowTablesStatementNode();
     }
 
     private DropTableStatementNode parseDropTableStatement() {

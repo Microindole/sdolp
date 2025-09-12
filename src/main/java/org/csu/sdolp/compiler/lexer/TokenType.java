@@ -51,6 +51,9 @@ public enum TokenType {
     AVG,        // "AVG"
     MIN,        // "MIN"
     MAX,        // "MAX"
+
+    SHOW,       // "SHOW"
+    TABLES,     // "TABLES" <-- 新增
     // ---- 标识符 (Identifier) ----
     IDENTIFIER, // 表名、列名等
 

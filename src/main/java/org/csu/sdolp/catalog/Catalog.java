@@ -407,6 +407,17 @@ public class Catalog {
         return tables.get(tableName);
     }
 
+    /**
+     * Retrieves a list of all user-defined table names.
+     * @return A sorted list of table names.
+     */
+    public List<String> getTableNames() {
+        // Return a sorted list of table names, excluding the internal catalog tables.
+        return tables.keySet().stream()
+                .filter(name -> !name.startsWith("_catalog"))
+                .sorted()
+                .collect(Collectors.toList());
+    }
     // 辅助函数，用于从磁盘读取指定表的元组
     private Tuple getTableTuple(String tableName) throws IOException {
         int tableId = tableIds.get(tableName);

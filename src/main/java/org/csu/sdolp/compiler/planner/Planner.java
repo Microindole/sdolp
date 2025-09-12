@@ -51,6 +51,9 @@ public class Planner {
         if (ast instanceof AlterTableStatementNode stmt) {
             return createAlterTablePlan(stmt);
         }
+        if (ast instanceof ShowTablesStatementNode stmt) { // <-- 新增
+            return new ShowTablesPlanNode();
+        }
         if (ast instanceof CreateIndexStatementNode stmt) {
             return createIndexPlan(stmt);
         }
