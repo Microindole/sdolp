@@ -104,7 +104,6 @@ public class TableHeap implements TupleIterator {
         }
     }
 
-    // **公开给 InsertExecutor 的方法**
     public boolean insertTuple(Tuple tuple, Transaction txn) throws IOException {
         // 正常插入总是需要加锁和写日志
         return insertTuple(tuple, txn, true, true);
@@ -260,6 +259,24 @@ public class TableHeap implements TupleIterator {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Thread interrupted while acquiring lock", e);
+        }
+    }
+
+    public Tuple getTuple(RID rid, Transaction txn) throws IOException {
+        try {
+            PageId pageId = new PageId(rid.pageNum());
+            // 读取数据需要加共享锁
+            lockManager.lockShared(txn, pageId);
+            Page page = bufferPoolManager.getPage(pageId);
+            Tuple tuple = page.getTuple(rid.slotIndex(), schema);
+            if (tuple != null) {
+                tuple.setRid(rid);
+            }
+            // 注意：事务结束前不应释放锁，这里只是获取页面
+            return tuple;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Thread interrupted while acquiring lock for getTuple", e);
         }
     }
 }

@@ -24,6 +24,10 @@ public class BPlusTree {
         this.keyComparator = Comparator.comparingInt(v -> (Integer) v.getValue());
     }
 
+    public int getRootPageId() {
+        return rootPageId;
+    }
+
     public boolean isEmpty() throws IOException {
         if (rootPageId == -1) return true;
         BPlusTreeNodePage rootNode = getNode(rootPageId);

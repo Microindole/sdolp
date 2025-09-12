@@ -1,6 +1,7 @@
 package org.csu.sdolp.compiler.planner;
 
 import org.csu.sdolp.catalog.Catalog;
+import org.csu.sdolp.catalog.IndexInfo;
 import org.csu.sdolp.catalog.TableInfo;
 import org.csu.sdolp.common.model.Column;
 import org.csu.sdolp.common.model.DataType;
@@ -38,11 +39,11 @@ public class Planner {
         if (ast instanceof SelectStatementNode stmt) {
             return createSelectPlan(stmt);
         }
-        if (ast instanceof DeleteStatementNode) {
-            return createDeletePlan((DeleteStatementNode) ast);
+        if (ast instanceof DeleteStatementNode stmt) {
+            return createDeletePlan(stmt);
         }
-        if (ast instanceof UpdateStatementNode) {
-            return createUpdatePlan((UpdateStatementNode) ast);
+        if (ast instanceof UpdateStatementNode stmt) {
+            return createUpdatePlan(stmt);
         }
         if (ast instanceof DropTableStatementNode stmt) {
             return createDropTablePlan(stmt);
@@ -50,6 +51,13 @@ public class Planner {
         if (ast instanceof AlterTableStatementNode stmt) {
             return createAlterTablePlan(stmt);
         }
+        // ================================================================
+        // ================== 新增：处理 CREATE INDEX ==================
+        // ================================================================
+        if (ast instanceof CreateIndexStatementNode stmt) {
+            return createIndexPlan(stmt);
+        }
+
         throw new UnsupportedOperationException("Unsupported statement type for planning: " + ast.getClass().getSimpleName());
     }
 
@@ -80,53 +88,54 @@ public class Planner {
         return new InsertPlanNode(tableInfo, List.of(tuple));
     }
 
-    // ====== (Phase 4) ======
-    private PlanNode createSelectPlan(SelectStatementNode ast) {
-        TableInfo leftTableInfo = catalog.getTable(ast.fromTable().getName());
-        PlanNode plan = new SeqScanPlanNode(leftTableInfo);
+    /**
+     * 新增：为 CREATE INDEX 语句创建执行计划。
+     * @param ast CreateIndexStatementNode
+     * @return CreateIndexPlanNode
+     */
+    private PlanNode createIndexPlan(CreateIndexStatementNode ast) {
+        String indexName = ast.getIndexName().getName();
+        String tableName = ast.getTableName().getName();
+        // 假设AST中只有一个列用于索引
+        String columnName = ast.getColumnNames().get(0).getName();
 
-        // 2. 如果有 JOIN，创建 JoinPlanNode
+        TableInfo tableInfo = catalog.getTable(tableName);
+        if (tableInfo == null) {
+            throw new IllegalStateException("Table '" + tableName + "' not found for index creation.");
+        }
+        return new CreateIndexPlanNode(indexName, tableName, columnName, tableInfo);
+    }
+
+
+    /**
+     * 【最终版本】创建 SELECT 查询计划，完整集成了索引选择和您原有的 JOIN 等逻辑。
+     */
+    private PlanNode createSelectPlan(SelectStatementNode ast) {
+        String fromTableName = ast.fromTable().getName();
+        TableInfo fromTableInfo = catalog.getTable(fromTableName);
+        PlanNode plan;
+
+        IndexInfo indexInfo = findIndexForPredicate(fromTableName, ast.whereClause());
+
+        if (indexInfo != null) {
+            System.out.println("[Planner] Index found for '" + fromTableName + "." + indexInfo.getColumnName() + "'. Using Index Scan.");
+            Value searchValue = extractValueFromPredicate(ast.whereClause());
+            plan = new IndexScanPlanNode(fromTableInfo, indexInfo, searchValue);
+        } else {
+            System.out.println("[Planner] No suitable index found for query. Using Sequential Scan.");
+            plan = new SeqScanPlanNode(fromTableInfo);
+            if (ast.whereClause() != null) {
+                plan = new FilterPlanNode(plan, ast.whereClause());
+            }
+        }
+
         if (ast.joinTable() != null) {
             TableInfo rightTableInfo = catalog.getTable(ast.joinTable().getName());
             PlanNode rightPlan = new SeqScanPlanNode(rightTableInfo);
             plan = new JoinPlanNode(plan, rightPlan, ast.joinCondition());
         }
 
-        // 3. WHERE 子句 -> Filter
-        if (ast.whereClause() != null) {
-            plan = new FilterPlanNode(plan, ast.whereClause());
-        }
-
-        // --- 聚合和分组逻辑 ---
-        /*boolean hasGroupBy = ast.groupByClause() != null && !ast.groupByClause().isEmpty();
-        List<AggregateExpressionNode> aggregates = ast.selectList().stream()
-                .filter(AggregateExpressionNode.class::isInstance)
-                .map(AggregateExpressionNode.class::cast)
-                .collect(Collectors.toList());
-        boolean hasAggregate = !aggregates.isEmpty();
-
-        if (hasGroupBy || hasAggregate) {
-            // 构造聚合后的 Schema
-            List<Column> outputColumns = new ArrayList<>();
-            if (hasGroupBy) {
-                for (IdentifierNode groupByColId : ast.groupByClause()) {
-                    Column originalCol = tableInfo.getSchema().getColumn(groupByColId.getName());
-                    outputColumns.add(new Column(originalCol.getName(), originalCol.getType()));
-                }
-            }
-            for (AggregateExpressionNode agg : aggregates) {
-                // 聚合结果通常是 INT 或 DECIMAL，这里简化为INT
-                outputColumns.add(new Column(agg.functionName(), DataType.INT));
-            }
-            Schema aggSchema = new Schema(outputColumns);
-
-            plan = new AggregatePlanNode(plan, ast.groupByClause(), aggregates, aggSchema);
-        }*/
-
-        // --- 投影逻辑 ---
         if (!ast.isSelectAll()) {
-            // 【修正点】投影逻辑不应该被 if 包裹，它总是需要执行（除非是 SELECT *）
-            // 从当前 plan (可能是 Scan, Join, 或 Aggregate) 的输出中选择列
             Schema inputSchemaForProject = plan.getOutputSchema();
 
             List<Column> projectedColumns = new ArrayList<>();
@@ -134,49 +143,40 @@ public class Planner {
                 if (expr instanceof IdentifierNode idNode) {
                     Column originalColumn = findColumnInSchema(inputSchemaForProject, idNode.getName());
                     projectedColumns.add(originalColumn);
-                    // 假设您有 AggregateExpressionNode
-                } /* else if (expr instanceof AggregateExpressionNode aggNode) {
-                    // 从聚合节点的输出中找到对应的列
-                    Column aggColumn = findColumnInSchema(inputSchemaForProject, aggNode.toString());
-                    projectedColumns.add(aggColumn);
-                }*/
+                }
             }
             Schema projectedSchema = new Schema(projectedColumns);
             plan = new ProjectPlanNode(plan, projectedSchema);
         }
 
-        // --- 6. 排序和限制 ---
         if (ast.orderByClause() != null) {
             plan = new SortPlanNode(plan, ast.orderByClause());
         }
-
         if (ast.limitClause() != null) {
             plan = new LimitPlanNode(plan, ast.limitClause().limit());
         }
 
         return plan;
     }
+
     private PlanNode createDeletePlan(DeleteStatementNode ast) {
         TableInfo tableInfo = catalog.getTable(ast.tableName().getName());
-        // 1. 创建一个子计划来找到所有要删除的元组
         PlanNode childPlan = new SeqScanPlanNode(tableInfo);
         if (ast.whereClause() != null) {
             childPlan = new FilterPlanNode(childPlan, ast.whereClause());
         }
-        // 2. 用 DeletePlanNode 包装子计划
         return new DeletePlanNode(childPlan, tableInfo);
     }
 
     private PlanNode createUpdatePlan(UpdateStatementNode ast) {
         TableInfo tableInfo = catalog.getTable(ast.tableName().getName());
-        // 1. 创建一个子计划来找到所有要更新的元组
         PlanNode childPlan = new SeqScanPlanNode(tableInfo);
         if (ast.whereClause() != null) {
             childPlan = new FilterPlanNode(childPlan, ast.whereClause());
         }
-        // 2. 用 UpdatePlanNode 包装子计划
         return new UpdatePlanNode(childPlan, tableInfo, ast.setClauses());
     }
+
     private PlanNode createDropTablePlan(DropTableStatementNode ast) {
         return new DropTablePlanNode(ast.tableName().getName());
     }
@@ -198,5 +198,32 @@ public class Planner {
                         "Column '" + columnName + "' not found in plan's output schema. " +
                                 "This should have been caught during semantic analysis."
                 ));
+    }
+
+    private IndexInfo findIndexForPredicate(String tableName, ExpressionNode predicate) {
+        if (predicate == null) {
+            return null;
+        }
+        if (predicate instanceof BinaryExpressionNode binaryExpr) {
+            if (binaryExpr.operator().type() == TokenType.EQUAL &&
+                    binaryExpr.left() instanceof IdentifierNode &&
+                    binaryExpr.right() instanceof LiteralNode) {
+
+                String columnName = ((IdentifierNode) binaryExpr.left()).getName();
+                return catalog.getIndex(tableName, columnName);
+            }
+        }
+        return null;
+    }
+
+    private Value extractValueFromPredicate(ExpressionNode predicate) {
+        if (predicate instanceof BinaryExpressionNode binaryExpr && binaryExpr.right() instanceof LiteralNode literal) {
+            if (literal.literal().type() == TokenType.INTEGER_CONST) {
+                return new Value(Integer.parseInt(literal.literal().lexeme()));
+            } else if (literal.literal().type() == TokenType.STRING_CONST) {
+                return new Value(literal.literal().lexeme());
+            }
+        }
+        throw new IllegalStateException("Could not extract value from predicate for index scan. This indicates a planner bug.");
     }
 }
