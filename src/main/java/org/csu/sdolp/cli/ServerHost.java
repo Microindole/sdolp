@@ -12,7 +12,6 @@ import java.net.Socket;
 
 public class ServerHost {
     public static void main(String[] args) throws Exception {
-        // 1. 在服务器启动时，创建唯一的数据库引擎实例
         final QueryProcessor queryProcessor = new QueryProcessor("minidb.data");
 
         RecoveryManager recoveryManager = new RecoveryManager(
@@ -21,14 +20,12 @@ public class ServerHost {
                 queryProcessor.getCatalog(),
                 queryProcessor.getLockManager()
         );
-        recoveryManager.recover(); // 执行恢复！
+        recoveryManager.recover();
 
-        // 2. 监听一个端口 (例如 9999)
         int port = 8848;
         ServerSocket serverSocket = new ServerSocket(port);
         System.out.println("MiniDB server started. Listening on port " + port + "...");
 
-        // 添加一个钩子，在服务器关闭时安全地关闭数据库
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
                 System.out.println("Shutting down database engine...");
@@ -40,24 +37,35 @@ public class ServerHost {
         }));
 
         while (true) {
-            // 3. 接受客户端连接，这是一个阻塞操作
             Socket clientSocket = serverSocket.accept();
 
-            // 4. 为每个客户端创建一个新的线程来处理它的请求
             new Thread(() -> {
                 System.out.println("Client connected: " + clientSocket.getInetAddress());
                 try (
-                    PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true);
-                    BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()))
+                        PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true);
+                        BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()))
                 ) {
+                    // --- 核心修改：在这里接收用户名并创建Session ---
+                    out.println("Welcome! Please enter your username:"); // 向客户端发送提示
+                    String username = in.readLine(); // 读取客户端发来的第一行作为用户名
+                    if (username == null || username.trim().isEmpty()) {
+                        System.out.println("Client failed to provide a username. Closing connection.");
+                        clientSocket.close();
+                        return;
+                    }
+
+                    // 使用收到的用户名创建一个已认证的Session
+                    Session session = Session.createAuthenticatedSession(clientSocket.hashCode(), username.trim());
+                    System.out.println("User '" + session.getUsername() + "' logged in from local shell.");
+                    out.println("Login successful as " + session.getUsername() + ". You can now execute commands."); // 向客户端确认登录成功
+
                     String sql;
                     while ((sql = in.readLine()) != null) {
                         if ("exit;".equalsIgnoreCase(sql.trim())) {
                             break;
                         }
-                        // 从客户端读取SQL，交给唯一的引擎执行，并获取结果字符串
-                        String result = queryProcessor.executeAndGetResult(sql);
-                        // 将结果字符串中的换行符替换为特殊标记，以便客户端正确解析
+                        // --- 核心修改：调用需要Session参数的executeAndGetResult方法 ---
+                        String result = queryProcessor.executeAndGetResult(sql, session);
                         out.println(result.replace("\n", "<br>"));
                     }
                 } catch (Exception e) {

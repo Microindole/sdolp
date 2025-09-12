@@ -20,12 +20,26 @@ public class InteractiveShell {
                 BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                 Scanner consoleScanner = new Scanner(System.in)
         ) {
-            System.out.println("Successfully connected to MiniDB server. Type 'exit;' to quit.");
+            // --- 核心修改：在这里实现登录流程 ---
+            // 1. 读取服务器的欢迎信息
+            String serverWelcome = in.readLine();
+            System.out.println("Server: " + serverWelcome);
+
+            // 2. 提示用户输入用户名
+            System.out.print("Enter username: ");
+            String username = consoleScanner.nextLine();
+            out.println(username); // 将用户名发送给服务器
+
+            // 3. 读取服务器的登录确认信息
+            String loginResponse = in.readLine();
+            System.out.println("Server: " + loginResponse);
+
+            System.out.println("Type 'exit;' to quit.");
 
             StringBuilder commandBuilder = new StringBuilder();
-
             while (true) {
-                System.out.print("miniDB-client> ");
+                // 根据登录的用户名显示不同的提示符
+                System.out.print(username + "@miniDB> ");
                 String line = consoleScanner.nextLine();
 
                 commandBuilder.append(line.trim()).append(" ");
