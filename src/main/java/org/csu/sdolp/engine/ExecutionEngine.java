@@ -46,7 +46,7 @@ public class ExecutionEngine {
         // --- DML and Scan Executors ---
         if (plan instanceof InsertPlanNode insertPlan) {
             TableHeap tableHeap = new TableHeap(bufferPoolManager, insertPlan.getTableInfo(), logManager, lockManager);
-            return new InsertExecutor(insertPlan, tableHeap, txn);
+            return new InsertExecutor(insertPlan, tableHeap, txn, catalog, bufferPoolManager);
         }
         if (plan instanceof SeqScanPlanNode seqScanPlan) {
             TableHeap tableHeap = new TableHeap(bufferPoolManager, seqScanPlan.getTableInfo(), logManager, lockManager);
@@ -55,7 +55,7 @@ public class ExecutionEngine {
         if (plan instanceof DeletePlanNode deletePlan) {
             TupleIterator childPlan = buildExecutorTree(deletePlan.getChild(), txn);
             TableHeap tableHeap = new TableHeap(bufferPoolManager, deletePlan.getTableInfo(), logManager, lockManager);
-            return new DeleteExecutor(childPlan, tableHeap, txn);
+            return new DeleteExecutor(deletePlan, childPlan, tableHeap, txn, catalog, bufferPoolManager);
         }
         if (plan instanceof UpdatePlanNode updatePlan) {
             TupleIterator childPlan = buildExecutorTree(updatePlan.getChild(), txn);
@@ -95,6 +95,15 @@ public class ExecutionEngine {
             TupleIterator leftExecutor = buildExecutorTree(joinPlan.getLeft(), txn);
             TupleIterator rightExecutor = buildExecutorTree(joinPlan.getRight(), txn);
             return new JoinExecutor(joinPlan, leftExecutor, rightExecutor);
+        }
+        if (plan instanceof CreateIndexPlanNode createIndexPlan) {
+            TableHeap tableHeap = new TableHeap(bufferPoolManager, createIndexPlan.getTableInfo(), logManager, lockManager);
+            return new CreateIndexExecutor(createIndexPlan, tableHeap, catalog, bufferPoolManager, txn);
+        }
+
+        if (plan instanceof IndexScanPlanNode indexScanPlan) {
+            TableHeap tableHeap = new TableHeap(bufferPoolManager, indexScanPlan.getTableInfo(), logManager, lockManager);
+            return new IndexScanExecutor(indexScanPlan, tableHeap, bufferPoolManager, txn);
         }
 
         // --- DDL Executors ---

@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 /**
  * 系统目录，负责管理数据库的所有元数据（表、列等）。
@@ -23,6 +24,8 @@ public class Catalog {
     private final Map<String, TableInfo> tables;
     private final Map<String, Integer> tableIds;
     private final AtomicInteger nextTableId;
+    private final Map<String, IndexInfo> indices;
+
 
     // --- 元数据表的特殊定义 ---
     // 存储所有表的信息 (table_id, table_name, first_page_id)
@@ -41,6 +44,7 @@ public class Catalog {
         this.tables = new ConcurrentHashMap<>();
         this.tableIds = new ConcurrentHashMap<>();
         this.nextTableId = new AtomicInteger(0);
+        this.indices = new ConcurrentHashMap<>();
 
         // 定义元数据表的 Schema
         this.tablesTableSchema = new Schema(Arrays.asList(
@@ -306,5 +310,72 @@ public class Catalog {
             }
         }
         return null;
+    }
+
+    /**
+     * 创建并注册一个新的索引。
+     */
+    public void createIndex(String indexName, String tableName, String columnName, int rootPageId) {
+        if (indices.containsKey(indexName)) {
+            throw new IllegalStateException("Index '" + indexName + "' already exists.");
+        }
+        IndexInfo indexInfo = new IndexInfo(indexName, tableName, columnName, rootPageId);
+        indices.put(indexName, indexInfo);
+        // 您需要添加将索引信息持久化到磁盘的逻辑
+    }
+
+    /**
+     * *** 新增方法：更新索引的根页面ID ***
+     */
+    public void updateIndexRootPageId(String indexName, int newRootPageId) {
+        IndexInfo indexInfo = indices.get(indexName);
+        if (indexInfo != null) {
+            indexInfo.setRootPageId(newRootPageId);
+            // 在一个更完整的系统中，这里也需要将此变更持久化到磁盘的元数据表中。
+            System.out.println("[Catalog] Updated root page ID for index '" + indexName + "' to " + newRootPageId);
+        } else {
+            throw new IllegalStateException("Cannot update root page for non-existent index '" + indexName + "'.");
+        }
+    }
+
+    /**
+     * 根据表名和列名查找索引。
+     */
+    public IndexInfo getIndex(String tableName, String columnName) {
+        for (IndexInfo indexInfo : indices.values()) {
+            if (indexInfo.getTableName().equalsIgnoreCase(tableName) && indexInfo.getColumnName().equalsIgnoreCase(columnName)) {
+                return indexInfo;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 根据索引名称获取索引信息。
+     */
+    public IndexInfo getIndex(String indexName) {
+        return indices.get(indexName);
+    }
+
+    public List<IndexInfo> getIndexesForTable(String tableName) {
+        return indices.values().stream()
+                .filter(indexInfo -> indexInfo.getTableName().equalsIgnoreCase(tableName))
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 删除一个表上的所有索引元数据。
+     * @param tableName 表名
+     */
+    public void dropIndexesForTable(String tableName) {
+        List<String> indexesToRemove = indices.values().stream()
+                .filter(indexInfo -> indexInfo.getTableName().equalsIgnoreCase(tableName))
+                .map(IndexInfo::getIndexName)
+                .collect(Collectors.toList());
+
+        for (String indexName : indexesToRemove) {
+            indices.remove(indexName);
+            System.out.println("[Catalog] Dropped index metadata '" + indexName + "' for table '" + tableName + "'.");
+        }
     }
 }

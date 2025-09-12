@@ -28,6 +28,7 @@ public class Lexer {
         keywords.put("where", TokenType.WHERE);
         keywords.put("create", TokenType.CREATE);
         keywords.put("table", TokenType.TABLE);
+        keywords.put("index", TokenType.INDEX);
         keywords.put("insert", TokenType.INSERT);
         keywords.put("into", TokenType.INTO);
         keywords.put("values", TokenType.VALUES);

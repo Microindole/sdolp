@@ -13,6 +13,7 @@ public enum TokenType {
     WHERE,      // "WHERE"
     CREATE,     // "CREATE"
     TABLE,      // "TABLE"
+    INDEX,      // "INDEX"
     INSERT,     // "INSERT"
     INTO,       // "INTO"
     VALUES,     // "VALUES"
