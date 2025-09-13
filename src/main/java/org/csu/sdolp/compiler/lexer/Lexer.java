@@ -60,6 +60,7 @@ public class Lexer {
         keywords.put("max", TokenType.MAX);
         keywords.put("show", TokenType.SHOW); // show
         keywords.put("tables", TokenType.TABLES); // tables
+        keywords.put("full", TokenType.FULL);
         keywords.put("user", TokenType.USER);
         keywords.put("identified", TokenType.IDENTIFIED);
         keywords.put("grant", TokenType.GRANT);

@@ -27,9 +27,9 @@ import java.util.Random;
 public class MysqlProtocolHandler implements Runnable {
 
     private final Socket clientSocket;
-    private final QueryProcessor queryProcessor;
+    private QueryProcessor queryProcessor;
     private final int connectionId;
-    private final Catalog catalog;
+    private Catalog catalog;
     private Session session;
     private String currentDb;
 
@@ -49,6 +49,15 @@ public class MysqlProtocolHandler implements Runnable {
         }
     }
 
+    public MysqlProtocolHandler(Socket clientSocket, int connectionId) {
+        this.clientSocket = clientSocket;
+        this.connectionId = connectionId;
+        this.session = new Session(connectionId);
+        this.queryProcessor = null;
+        this.catalog = null;
+        this.currentDb = null;
+    }
+
     public MysqlProtocolHandler(Socket clientSocket, QueryProcessor queryProcessor, Catalog catalog, int connectionId) {
         this.clientSocket = clientSocket;
         this.queryProcessor = queryProcessor;
@@ -57,11 +66,25 @@ public class MysqlProtocolHandler implements Runnable {
         this.session = new Session(connectionId);
     }
 
+    private void switchDatabase(String dbName) throws IOException {
+        if (queryProcessor != null) {
+            queryProcessor.close();
+        }
+        System.out.println("[ConnID: " + connectionId + "] Switching to database: " + dbName);
+        queryProcessor = new QueryProcessor(dbName);
+        catalog = queryProcessor.getCatalog(); // 更新 catalog 引用
+        currentDb = dbName;
+    }
+
     @Override
     public void run() {
         System.out.println("MySQL Protocol Handler started for connection ID: " + connectionId);
         try (InputStream in = clientSocket.getInputStream();
              OutputStream out = clientSocket.getOutputStream()) {
+
+            // 为了认证，我们需要一个临时的 Catalog 实例。
+            // 我们连接到默认数据库来获取用户信息。
+            switchDatabase("default");
 
             byte[] salt = sendHandshake(out, 0);
             System.out.println("Sent handshake packet to client.");
@@ -100,6 +123,7 @@ public class MysqlProtocolHandler implements Runnable {
             e.printStackTrace();
         } finally {
             try {
+                if (queryProcessor != null) queryProcessor.close(); // 关闭最后的 QP 实例
                 if (!clientSocket.isClosed()) clientSocket.close();
                 System.out.println("Client disconnected: " + session.getUsername() + "@" + clientSocket.getInetAddress());
             } catch (IOException e) {
@@ -189,24 +213,33 @@ public class MysqlProtocolHandler implements Runnable {
         int commandType = commandPacket.payload[0] & 0xFF;
         int serverSequenceId = commandPacket.sequenceId + 1;
 
-        System.out.println("Received command type: 0x" + Integer.toHexString(commandType));
+        System.out.println("[ConnID: " + connectionId + ", DB: " + currentDb + "] Received command type: 0x" + Integer.toHexString(commandType));
+
 
         switch (commandType) {
             case 0x01: // COM_QUIT
-                System.out.println("Client sent QUIT command");
                 clientSocket.close();
                 break;
 
-            case 0x02: // COM_INIT_DB
+            case 0x02: // COM_INIT_DB (USE database)
                 String dbName = new String(commandPacket.payload, 1, commandPacket.payload.length - 1, StandardCharsets.UTF_8);
-                System.out.println("Client wants to use database: " + dbName);
-                this.currentDb = dbName;
-                sendOkPacket(out, serverSequenceId, 0, 0);
+                try {
+                    switchDatabase(dbName);
+                    sendOkPacket(out, serverSequenceId, 0, 0);
+                } catch (Exception e) {
+                    sendErrorPacket(out, serverSequenceId, 1049, "42000", "Unknown database '" + dbName + "'");
+                }
                 break;
 
             case 0x03: // COM_QUERY
                 String sql = new String(commandPacket.payload, 1, commandPacket.payload.length - 1, StandardCharsets.UTF_8);
-                System.out.println("Received SQL query: " + sql);
+                System.out.println("[ConnID: " + connectionId + ", DB: " + currentDb + "] Received SQL: " + sql);
+
+
+                if (queryProcessor == null && !(sql.toLowerCase().contains("create database") || sql.toLowerCase().contains("show databases"))) {
+                    sendErrorPacket(out, serverSequenceId, 1046, "3D000", "No database selected");
+                    return;
+                }
 
                 if (handleSpecialQuery(sql, out, serverSequenceId)) {
                     return;
@@ -256,7 +289,6 @@ public class MysqlProtocolHandler implements Runnable {
                     }
                 }
                 break;
-
             default:
                 sendOkPacket(out, serverSequenceId, 0, 0);
                 break;

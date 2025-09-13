@@ -137,7 +137,17 @@ public class Parser {
     }
 
     private StatementNode parseShowTablesStatement() {
+        match(TokenType.FULL);
         consume(TokenType.TABLES, "Expected 'TABLES' after 'SHOW'");
+        if (match(TokenType.FROM)) {
+            consume(TokenType.IDENTIFIER, "Expected database name after 'FROM'");
+        }
+        if (match(TokenType.WHERE)) {
+            while (peek().type() != TokenType.SEMICOLON && peek().type() != TokenType.EOF) {
+                advance();
+            }
+        }
+
         return new ShowTablesStatementNode();
     }
 

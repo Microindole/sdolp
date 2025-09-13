@@ -56,6 +56,8 @@ public enum TokenType {
 
     SHOW,       // "SHOW"
     TABLES,     // "TABLES"
+    FULL,       // "FULL"
+
     // ---- 标识符 (Identifier) ----
     IDENTIFIER, // 表名、列名等
 

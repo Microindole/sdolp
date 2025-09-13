@@ -10,31 +10,19 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class ServerRemote {
     public static void main(String[] args) throws Exception {
-        // --- 核心修复：使用一个明确的数据库名，而不是文件名 ---
-        final String DEFAULT_DB_NAME = "default";
-        // 1. 启动数据库引擎，执行恢复
-        final QueryProcessor queryProcessor = new QueryProcessor(DEFAULT_DB_NAME);
-        RecoveryManager recoveryManager = new RecoveryManager(
-                queryProcessor.getLogManager(),
-                queryProcessor.getBufferPoolManager(),
-                queryProcessor.getCatalog(),
-                queryProcessor.getLockManager()
-        );
-        recoveryManager.recover();
+
+        // 我们不再在启动时初始化一个全局的 QueryProcessor 和 RecoveryManager
+        // 恢复操作将在首次加载数据库时在 QueryProcessor 构造函数内部隐式完成。
+        System.out.println("MiniDB server template started. Ready to create database handlers per connection.");
 
         int port = 9999;
         ServerSocket serverSocket = new ServerSocket(port);
-        System.out.println("MiniDB server started on database '"+ DEFAULT_DB_NAME +"'. Listening on port " + port + " for MySQL protocol connections...");
+        System.out.println("Listening on port " + port + " for MySQL protocol connections...");
 
         // 添加关闭钩子
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            try {
-                System.out.println("Shutting down database engine...");
-                queryProcessor.close();
-                System.out.println("Database engine shut down successfully.");
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+            System.out.println("Shutting down server...");
+            // 如果有全局资源需要清理，可以在这里添加
         }));
 
         AtomicInteger connectionCounter = new AtomicInteger(0);
@@ -43,8 +31,9 @@ public class ServerRemote {
             Socket clientSocket = serverSocket.accept();
             int connectionId = connectionCounter.incrementAndGet();
             System.out.println("Client connected: " + clientSocket.getInetAddress() + " (Connection ID: " + connectionId + ")");
-            Catalog catalog = queryProcessor.getCatalog();
-            MysqlProtocolHandler handler = new MysqlProtocolHandler(clientSocket, queryProcessor, catalog, connectionId);
+
+            // 注意：我们不再传递 catalog，因为每个 handler 将管理自己的 QueryProcessor 实例
+            MysqlProtocolHandler handler = new MysqlProtocolHandler(clientSocket, connectionId);
             new Thread(handler).start();
         }
     }
