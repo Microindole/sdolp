@@ -30,6 +30,12 @@ public class DiskManager {
 
     public void open() throws IOException {
         File file = new File(dbFilePath);
+
+        File parentDir = file.getParentFile();
+        if (parentDir != null && !parentDir.exists()) {
+            parentDir.mkdirs();
+        }
+
         boolean isNewFile = !file.exists() || file.length() == 0;
 
         if (!file.exists()) {

@@ -1,5 +1,6 @@
 package org.csu.sdolp.engine;
 
+import org.csu.sdolp.DatabaseManager;
 import org.csu.sdolp.catalog.Catalog;
 import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Value;
@@ -28,14 +29,16 @@ public class ExecutionEngine {
     private final Catalog catalog;
     private final LogManager logManager;
     private final LockManager lockManager;
+    private final DatabaseManager dbManager;
 
 
     public ExecutionEngine(BufferPoolManager bufferPoolManager, Catalog catalog,
-                           LogManager logManager, LockManager lockManager) {
+                           LogManager logManager, LockManager lockManager, DatabaseManager dbManager) { // <-- 新增
         this.bufferPoolManager = bufferPoolManager;
         this.catalog = catalog;
         this.logManager = logManager;
         this.lockManager = lockManager;
+        this.dbManager = dbManager;
     }
 
     public TupleIterator execute(PlanNode plan, Transaction txn) throws IOException, InterruptedException {
@@ -43,6 +46,14 @@ public class ExecutionEngine {
     }
 
     private TupleIterator buildExecutorTree(PlanNode plan, Transaction txn) throws IOException, InterruptedException {
+        // --- DDL/DCL Executors for Databases ---
+        if (plan instanceof CreateDatabasePlanNode createDbPlan) { // <-- 新增
+            return new CreateDatabaseExecutor(createDbPlan, dbManager);
+        }
+        if (plan instanceof ShowDatabasesPlanNode showDbPlan) { // <-- 新增
+            return new ShowDatabasesExecutor(showDbPlan, dbManager);
+        }
+
         // --- DML and Scan Executors ---
         if (plan instanceof InsertPlanNode insertPlan) {
             TableHeap tableHeap = new TableHeap(bufferPoolManager, insertPlan.getTableInfo(), logManager, lockManager);
@@ -111,15 +122,12 @@ public class ExecutionEngine {
         }
         // --- DDL Executors ---
         if (plan instanceof CreateTablePlanNode createTablePlan) {
-            // *** 核心修复点 1：为 DDL 执行器传入 txn 和 logManager ***
             return new CreateTableExecutor(createTablePlan, catalog, txn, logManager);
         }
         if (plan instanceof DropTablePlanNode dropPlan) {
-            // *** 核心修复点 2：为 DDL 执行器传入 txn 和 logManager ***
             return new DropTableExecutor(dropPlan, catalog, txn, logManager);
         }
         if (plan instanceof AlterTablePlanNode alterPlan) {
-            // *** 核心修复点 3：为 DDL 执行器传入 txn 和 logManager ***
             return new AlterTableExecutor(alterPlan, catalog, txn, logManager);
         }
         // ======  (Phase 4) ======

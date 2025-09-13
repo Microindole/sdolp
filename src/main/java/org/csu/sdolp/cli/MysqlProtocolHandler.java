@@ -31,6 +31,7 @@ public class MysqlProtocolHandler implements Runnable {
     private final int connectionId;
     private final Catalog catalog;
     private Session session;
+    private String currentDb;
 
     // MySQL Protocol Constants
     private static final int CLIENT_PROTOCOL_41 = 0x00000200;
@@ -51,9 +52,9 @@ public class MysqlProtocolHandler implements Runnable {
     public MysqlProtocolHandler(Socket clientSocket, QueryProcessor queryProcessor, Catalog catalog, int connectionId) {
         this.clientSocket = clientSocket;
         this.queryProcessor = queryProcessor;
-        this.catalog = catalog; // 初始化 Catalog
+        this.catalog = catalog;
         this.connectionId = connectionId;
-        this.session = new Session(connectionId); // 初始化一个未认证的 Session
+        this.session = new Session(connectionId);
     }
 
     @Override
@@ -62,36 +63,27 @@ public class MysqlProtocolHandler implements Runnable {
         try (InputStream in = clientSocket.getInputStream();
              OutputStream out = clientSocket.getOutputStream()) {
 
-            // 1. 发送握手包
             byte[] salt = sendHandshake(out, 0);
             System.out.println("Sent handshake packet to client.");
 
-            // 2. 读取客户端认证响应
             Packet authPacket = readPacket(in);
             if (authPacket == null) {
                 System.err.println("Client disconnected after handshake.");
                 return;
             }
 
-            // *** 3. 核心认证逻辑 ***
             if (!authenticate(authPacket, salt, out)) {
                 System.err.println("Authentication failed for connection ID: " + connectionId);
-                // authenticate 方法内部已经发送了错误信息，这里直接返回即可
                 return;
             }
 
-            // 如果认证成功，session 已经被更新
             System.out.println("User '" + session.getUsername() + "' authenticated successfully for connection ID: " + connectionId);
-
-            // 4. 发送 OK 包表示认证成功
             sendOkPacket(out, authPacket.sequenceId + 1, 0, 0);
 
-            // 5. 主命令循环
             while (!clientSocket.isClosed()) {
                 Packet commandPacket = readPacket(in);
                 if (commandPacket == null) break;
 
-                // 在处理命令之前，检查是否已认证
                 if (!session.isAuthenticated()) {
                     sendErrorPacket(out, 1, 1045, "28000", "Access denied. Please log in.");
                     continue;
@@ -117,7 +109,6 @@ public class MysqlProtocolHandler implements Runnable {
     }
 
     private boolean authenticate(Packet authPacket, byte[] salt, OutputStream out) throws IOException, NoSuchAlgorithmException {
-        // 解析用户名
         int pos = 4 + 4 + 1 + 23;
         int userStart = -1;
         for (int i = pos; i < authPacket.payload.length; i++) {
@@ -138,21 +129,13 @@ public class MysqlProtocolHandler implements Runnable {
         if (userEnd == -1) return false;
 
         String username = new String(authPacket.payload, userStart, userEnd - userStart, StandardCharsets.UTF_8);
-
-        // --- 核心修复 ---
-        // 从 Catalog 获取该用户的密码哈希，以此判断用户是否存在
         byte[] storedPasswordHash = catalog.getPasswordHash(username);
 
         if (storedPasswordHash != null) {
-            // 在我们的简化模型中，只要用户存在于 Catalog 中，我们就认为认证成功。
-            // 一个真正的数据库在这里会进行复杂的密码哈希比对。
-
-            // 认证成功，更新 Session
             this.session = Session.createAuthenticatedSession(this.connectionId, username);
             System.out.println("Simplified authentication successful for user: '" + username + "'");
             return true;
         } else {
-            // 如果在 Catalog 中找不到用户，则认证失败
             System.err.println("Authentication failed: User '" + username + "' not found in catalog.");
             sendErrorPacket(out, authPacket.sequenceId + 1, 1045, "28000", "Access denied for user '" + username + "'");
             return false;
@@ -192,7 +175,6 @@ public class MysqlProtocolHandler implements Runnable {
 
         writePacket(out, packet.toByteArray(), sequenceId);
 
-        // 返回完整的 salt
         byte[] fullSalt = new byte[salt1.length + salt2.length];
         System.arraycopy(salt1, 0, fullSalt, 0, salt1.length);
         System.arraycopy(salt2, 0, fullSalt, salt1.length, salt2.length);
@@ -210,10 +192,6 @@ public class MysqlProtocolHandler implements Runnable {
         System.out.println("Received command type: 0x" + Integer.toHexString(commandType));
 
         switch (commandType) {
-            case 0x00: // COM_SLEEP
-                // Do nothing
-                break;
-
             case 0x01: // COM_QUIT
                 System.out.println("Client sent QUIT command");
                 clientSocket.close();
@@ -222,6 +200,7 @@ public class MysqlProtocolHandler implements Runnable {
             case 0x02: // COM_INIT_DB
                 String dbName = new String(commandPacket.payload, 1, commandPacket.payload.length - 1, StandardCharsets.UTF_8);
                 System.out.println("Client wants to use database: " + dbName);
+                this.currentDb = dbName;
                 sendOkPacket(out, serverSequenceId, 0, 0);
                 break;
 
@@ -229,43 +208,24 @@ public class MysqlProtocolHandler implements Runnable {
                 String sql = new String(commandPacket.payload, 1, commandPacket.payload.length - 1, StandardCharsets.UTF_8);
                 System.out.println("Received SQL query: " + sql);
 
-                // Handle special MySQL client queries
                 if (handleSpecialQuery(sql, out, serverSequenceId)) {
                     return;
                 }
 
                 Transaction txn = null;
-                TransactionManager transactionManager = queryProcessor.getTransactionManager(); // 获取事务管理器
-
+                TransactionManager transactionManager = queryProcessor.getTransactionManager();
 
                 try {
-                    // 1. 在处理查询前开始事务
                     txn = transactionManager.begin();
-
-                    // 2. 调用新的方法，在当前事务中执行查询
                     TupleIterator iterator = queryProcessor.createExecutorForQuery(sql, txn, this.session);
 
-                    // 3. 判断是返回结果集 (SELECT) 还是只返回OK (INSERT/UPDATE/CREATE...)
-                    if (iterator == null || iterator.getOutputSchema() == null ||
-                            "message".equals(iterator.getOutputSchema().getColumns().get(0).getName()) ||
-                            "inserted_rows".equals(iterator.getOutputSchema().getColumns().get(0).getName()) ||
-                            "deleted_rows".equals(iterator.getOutputSchema().getColumns().get(0).getName()) ||
-                            "updated_rows".equals(iterator.getOutputSchema().getColumns().get(0).getName()))
-                    {
-                        // 对于 DML/DDL，消耗掉迭代器以确保操作执行
-                        if (iterator != null && iterator.hasNext()) {
-                            iterator.next();
-                        }
-                        sendOkPacket(out, serverSequenceId, 0, 0);
-                    } else {
-                        // 对于 SELECT 查询，获取所有结果
+                    if (iterator != null && iterator.getOutputSchema() != null) {
                         Schema schema = iterator.getOutputSchema();
                         List<Tuple> results = new ArrayList<>();
                         while (iterator.hasNext()) {
                             results.add(iterator.next());
                         }
 
-                        // 按照MySQL协议发送结果集
                         serverSequenceId = sendResultSetHeader(out, serverSequenceId, schema.getColumns().size());
                         serverSequenceId = sendFieldPackets(out, serverSequenceId, schema);
                         serverSequenceId = sendEofPacket(out, serverSequenceId);
@@ -274,18 +234,20 @@ public class MysqlProtocolHandler implements Runnable {
                             serverSequenceId = sendRowPackets(out, serverSequenceId, results);
                         }
                         sendEofPacket(out, serverSequenceId);
+                    } else {
+                        if (iterator != null && iterator.hasNext()) {
+                            iterator.next();
+                        }
+                        sendOkPacket(out, serverSequenceId, 0, 0);
                     }
 
-                    // 4. 如果所有操作都成功，提交事务
                     transactionManager.commit(txn);
 
                 } catch (Exception e) {
                     System.err.println("Error executing query: " + e.getMessage());
-                    // 1142 (ER_COMMAND_DENIED_ERROR) 是权限错误的专用代码
                     if (e instanceof SemanticException && e.getMessage().toLowerCase().contains("access denied")) {
                         sendErrorPacket(out, serverSequenceId, 1142, "42000", e.getMessage());
                     } else {
-                        // 其他错误使用通用错误码
                         sendErrorPacket(out, serverSequenceId, 1064, "42000", "Error: " + e.getMessage());
                     }
 
@@ -293,30 +255,10 @@ public class MysqlProtocolHandler implements Runnable {
                         transactionManager.abort(txn);
                     }
                 }
-                break; // COM_QUERY case 结束
-
-            case 0x04: // COM_FIELD_LIST
-                // Return empty field list
-                sendEofPacket(out, serverSequenceId);
-                break;
-
-            case 0x05: // COM_CREATE_DB
-            case 0x06: // COM_DROP_DB
-            case 0x07: // COM_REFRESH
-            case 0x08: // COM_SHUTDOWN
-            case 0x09: // COM_STATISTICS
-            case 0x0a: // COM_PROCESS_INFO
-            case 0x0b: // COM_CONNECT
-            case 0x0c: // COM_PROCESS_KILL
-            case 0x0d: // COM_DEBUG
-            case 0x0e: // COM_PING
-                sendOkPacket(out, serverSequenceId, 0, 0);
                 break;
 
             default:
-                System.err.println("Unsupported command: 0x" + Integer.toHexString(commandType));
-                sendErrorPacket(out, serverSequenceId, 1047, "08S01",
-                        "Unknown command: 0x" + Integer.toHexString(commandType));
+                sendOkPacket(out, serverSequenceId, 0, 0);
                 break;
         }
     }
@@ -324,29 +266,37 @@ public class MysqlProtocolHandler implements Runnable {
     private boolean handleSpecialQuery(String sql, OutputStream out, int sequenceId) throws IOException {
         String sqlLower = sql.toLowerCase().trim();
 
-        // Handle SET statements
+        // --- 核心修复：为 Navicat 的 schemata 查询提供真实数据 ---
+        if (sqlLower.contains("from information_schema.schemata")) {
+            System.out.println("Intercepted information_schema.schemata query. Returning real database list.");
+
+            List<String> dbNames = queryProcessor.getDbManager().listDatabases();
+
+            sequenceId = sendResultSetHeader(out, sequenceId, 1);
+            sequenceId = sendSimpleFieldPacket(out, sequenceId, "SCHEMA_NAME");
+            sequenceId = sendEofPacket(out, sequenceId);
+
+            for (String dbName : dbNames) {
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                bos.write(writeLengthEncodedString(dbName));
+                sequenceId = writePacket(out, bos.toByteArray(), sequenceId);
+            }
+            sendEofPacket(out, sequenceId);
+
+            return true;
+        }
+
         if (sqlLower.startsWith("set ")) {
             sendOkPacket(out, sequenceId, 0, 0);
             return true;
         }
 
-        // Handle SHOW statements
         if (sqlLower.startsWith("show ")) {
-            if (sqlLower.contains("databases")) {
-                // Return empty database list
-                sendResultSetHeader(out, sequenceId, 1);
-                sendSimpleFieldPacket(out, sequenceId + 1, "Database");
-                sendEofPacket(out, sequenceId + 2);
-                sendEofPacket(out, sequenceId + 3);
-                return true;
-            } else if (sqlLower.contains("variables")) {
-                // Handle SHOW VARIABLES queries
+            if (sqlLower.contains("variables")) {
                 return handleShowVariables(sql, out, sequenceId);
             } else if (sqlLower.contains("engines")) {
-                // Handle SHOW ENGINES or queries about engines
                 return handleShowEngines(out, sequenceId);
             } else if (sqlLower.contains("status")) {
-                // Handle SHOW STATUS queries
                 return handleShowStatus(out, sequenceId);
             }
         }
@@ -355,17 +305,26 @@ public class MysqlProtocolHandler implements Runnable {
             return handleSystemVariables(sql, out, sequenceId);
         }
 
+        if (sqlLower.equals("select database()")) {
+            sendResultSetHeader(out, sequenceId, 1);
+            sendSimpleFieldPacket(out, sequenceId + 1, "database()");
+            sendEofPacket(out, sequenceId + 2);
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            bos.write(writeLengthEncodedString(this.currentDb != null ? this.currentDb : ""));
+            writePacket(out, bos.toByteArray(), sequenceId + 3);
+            sendEofPacket(out, sequenceId + 4);
+            return true;
+        }
+
         return false;
     }
 
-    // 添加处理SHOW STATUS的方法
     private boolean handleShowStatus(OutputStream out, int sequenceId) throws IOException {
         sendResultSetHeader(out, sequenceId, 2);
         sendSimpleFieldPacket(out, sequenceId + 1, "Variable_name");
         sendSimpleFieldPacket(out, sequenceId + 2, "Value");
         sendEofPacket(out, sequenceId + 3);
 
-        // Send some dummy status variables
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         bos.write(writeLengthEncodedString("Connections"));
         bos.write(writeLengthEncodedString("1"));
@@ -401,19 +360,19 @@ public class MysqlProtocolHandler implements Runnable {
     private int sendFieldPackets(OutputStream out, int sequenceId, Schema schema) throws IOException {
         for (org.csu.sdolp.common.model.Column col : schema.getColumns()) {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            bos.write(writeLengthEncodedString("def"));           // catalog
-            bos.write(writeLengthEncodedString("minidb"));        // database
-            bos.write(writeLengthEncodedString(""));              // table
-            bos.write(writeLengthEncodedString(""));              // org_table
-            bos.write(writeLengthEncodedString(col.getName()));   // name
-            bos.write(writeLengthEncodedString(col.getName()));   // org_name
-            bos.write(0x0c);                                      // length of fixed fields
-            bos.write(writeInt(33, 2));                          // character set
-            bos.write(writeInt(1024, 4));                        // column length
-            bos.write((byte) 0xfd);                              // type (VARCHAR)
-            bos.write(writeInt(0, 2));                           // flags
-            bos.write((byte) 0x00);                              // decimals
-            bos.write(new byte[2]);                              // filler
+            bos.write(writeLengthEncodedString("def"));
+            bos.write(writeLengthEncodedString("minidb"));
+            bos.write(writeLengthEncodedString(""));
+            bos.write(writeLengthEncodedString(""));
+            bos.write(writeLengthEncodedString(col.getName()));
+            bos.write(writeLengthEncodedString(col.getName()));
+            bos.write(0x0c);
+            bos.write(writeInt(33, 2));
+            bos.write(writeInt(1024, 4));
+            bos.write((byte) 0xfd);
+            bos.write(writeInt(0, 2));
+            bos.write((byte) 0x00);
+            bos.write(new byte[2]);
             sequenceId = writePacket(out, bos.toByteArray(), sequenceId);
         }
         return sequenceId;
@@ -424,7 +383,7 @@ public class MysqlProtocolHandler implements Runnable {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             for (org.csu.sdolp.common.model.Value val : tuple.getValues()) {
                 if (val.getValue() == null) {
-                    bos.write(0xfb); // NULL value
+                    bos.write(0xfb);
                 } else {
                     bos.write(writeLengthEncodedString(val.getValue().toString()));
                 }
@@ -481,19 +440,19 @@ public class MysqlProtocolHandler implements Runnable {
 
     private int sendOkPacket(OutputStream out, int sequenceId, int affectedRows, int lastInsertId) throws IOException {
         ByteArrayOutputStream packet = new ByteArrayOutputStream();
-        packet.write(0x00); // OK header
+        packet.write(0x00);
         packet.write(writeLengthEncodedInt(affectedRows));
         packet.write(writeLengthEncodedInt(lastInsertId));
-        packet.write(0x02); // SERVER_STATUS_AUTOCOMMIT
+        packet.write(0x02);
         packet.write(0x00);
-        packet.write(0x00); // warnings
+        packet.write(0x00);
         packet.write(0x00);
         return writePacket(out, packet.toByteArray(), sequenceId);
     }
 
     private int sendErrorPacket(OutputStream out, int sequenceId, int errorCode, String sqlState, String message) throws IOException {
         ByteArrayOutputStream packet = new ByteArrayOutputStream();
-        packet.write(0xFF); // Error header
+        packet.write(0xFF);
         packet.write(writeInt(errorCode, 2));
         packet.write('#');
         packet.write(sqlState.getBytes(StandardCharsets.UTF_8));
@@ -532,13 +491,11 @@ public class MysqlProtocolHandler implements Runnable {
     }
 
     private boolean handleShowVariables(String sql, OutputStream out, int sequenceId) throws IOException {
-        // Return dummy variables
         sendResultSetHeader(out, sequenceId, 2);
         sendSimpleFieldPacket(out, sequenceId + 1, "Variable_name");
         sendSimpleFieldPacket(out, sequenceId + 2, "Value");
         sendEofPacket(out, sequenceId + 3);
 
-        // Send some dummy variable rows if needed
         if (sql.toLowerCase().contains("lower_case")) {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             bos.write(writeLengthEncodedString("lower_case_table_names"));
@@ -565,7 +522,6 @@ public class MysqlProtocolHandler implements Runnable {
         sendSimpleFieldPacket(out, sequenceId + 6, "Savepoints");
         sendEofPacket(out, sequenceId + 7);
 
-        // Return dummy engine info
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         bos.write(writeLengthEncodedString("InnoDB"));
         bos.write(writeLengthEncodedString("DEFAULT"));
@@ -580,12 +536,10 @@ public class MysqlProtocolHandler implements Runnable {
     }
 
     private boolean handleSystemVariables(String sql, OutputStream out, int sequenceId) throws IOException {
-        // Handle SELECT @@variable queries
         sendResultSetHeader(out, sequenceId, 1);
         sendSimpleFieldPacket(out, sequenceId + 1, "Value");
         sendEofPacket(out, sequenceId + 2);
 
-        // Return dummy value
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         bos.write(writeLengthEncodedString("dummy_value"));
         writePacket(out, bos.toByteArray(), sequenceId + 3);
@@ -598,7 +552,6 @@ public class MysqlProtocolHandler implements Runnable {
         String sqlLower = sql.toLowerCase();
 
         if (sqlLower.contains("engines")) {
-            // Handle queries like: SELECT COUNT(*) AS support_ndb FROM information_schema.ENGINES WHERE Engine = 'ndbcluster'
             sendResultSetHeader(out, sequenceId, 1);
             if (sqlLower.contains("count")) {
                 sendSimpleFieldPacket(out, sequenceId + 1, "support_ndb");
@@ -607,7 +560,6 @@ public class MysqlProtocolHandler implements Runnable {
             }
             sendEofPacket(out, sequenceId + 2);
 
-            // Return count of 0 for ndbcluster
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             bos.write(writeLengthEncodedString("0"));
             writePacket(out, bos.toByteArray(), sequenceId + 3);
@@ -616,7 +568,6 @@ public class MysqlProtocolHandler implements Runnable {
             return true;
         }
 
-        // For other information_schema queries, return empty result
         sendResultSetHeader(out, sequenceId, 1);
         sendSimpleFieldPacket(out, sequenceId + 1, "Result");
         sendEofPacket(out, sequenceId + 2);

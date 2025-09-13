@@ -47,6 +47,10 @@ public class Parser {
                 consume(TokenType.CREATE, "'CREATE' keyword");
                 return parseCreateTableStatement();
             }
+            if (nextToken.type() == TokenType.DATABASE) {
+                consume(TokenType.CREATE, "'CREATE' keyword");
+                return parseCreateDatabaseStatement();
+            }
             if (nextToken.type() == TokenType.INDEX) {
                 consume(TokenType.CREATE, "'CREATE' keyword");
                 return parseCreateIndexStatement();
@@ -56,12 +60,15 @@ public class Parser {
                 return parseCreateUserStatement();
             }
 
-            throw new ParseException(nextToken, "Expected 'TABLE' or 'INDEX' after 'CREATE'");
+            throw new ParseException(nextToken, "Expected 'TABLE', 'DATABASE', or 'INDEX' after 'CREATE'");
         }
         if (match(TokenType.GRANT)) {
             return parseGrantStatement();
         }
         if (match(TokenType.SHOW)) {
+            if (peek().type() == TokenType.DATABASES) {
+                return parseShowDatabasesStatement();
+            }
             return parseShowTablesStatement();
         }
         if (match(TokenType.SELECT)) {
@@ -82,6 +89,18 @@ public class Parser {
 
         throw new ParseException(peek(), "a valid statement (CREATE, SELECT, INSERT, DELETE, DROP, etc.)");
     }
+
+    private StatementNode parseCreateDatabaseStatement() {
+        consume(TokenType.DATABASE, "Expected 'DATABASE' after 'CREATE'");
+        Token dbNameToken = consume(TokenType.IDENTIFIER, "database name");
+        return new CreateDatabaseStatementNode(new IdentifierNode(dbNameToken.lexeme()));
+    }
+
+    private StatementNode parseShowDatabasesStatement() {
+        consume(TokenType.DATABASES, "Expected 'DATABASES' after 'SHOW'");
+        return new ShowDatabasesStatementNode();
+    }
+
 
     private CreateUserStatementNode parseCreateUserStatement() {
         consume(TokenType.USER, "'USER' keyword after 'CREATE'");

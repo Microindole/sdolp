@@ -1,12 +1,15 @@
 package org.csu.sdolp.engine;
 
 import lombok.Getter;
+import org.csu.sdolp.DatabaseManager;
 import org.csu.sdolp.catalog.Catalog;
 import org.csu.sdolp.cli.Session;
 import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.compiler.lexer.Lexer;
 import org.csu.sdolp.compiler.parser.Parser;
+import org.csu.sdolp.compiler.parser.ast.CreateDatabaseStatementNode;
+import org.csu.sdolp.compiler.parser.ast.ShowDatabasesStatementNode;
 import org.csu.sdolp.compiler.parser.ast.StatementNode;
 import org.csu.sdolp.compiler.planner.Planner;
 import org.csu.sdolp.compiler.planner.plan.PlanNode;
@@ -28,34 +31,37 @@ import java.util.stream.Collectors;
 
 public class QueryProcessor {
 
-    private final DiskManager diskManager;
+    private DiskManager diskManager;
     @Getter
-    private final BufferPoolManager bufferPoolManager;
+    private BufferPoolManager bufferPoolManager;
     @Getter
-    private final Catalog catalog;
-    private final Planner planner;
-    private final ExecutionEngine executionEngine;
+    private Catalog catalog;
+    private Planner planner;
+    private ExecutionEngine executionEngine;
     @Getter
-    private final LogManager logManager;
+    private LogManager logManager;
     @Getter
-    private final LockManager lockManager;
+    private LockManager lockManager;
     @Getter
-    private final TransactionManager transactionManager;
+    private TransactionManager transactionManager;
+    @Getter // <-- 新增 Getter
+    private final DatabaseManager dbManager;
 
-    public QueryProcessor(String dbFilePath) {
+    public QueryProcessor(String dbName) {
         try {
-            this.diskManager = new DiskManager(dbFilePath);
+            this.dbManager = new DatabaseManager();
+            this.diskManager = new DiskManager(DatabaseManager.getDbFilePath(dbName));
             diskManager.open();
             final int bufferPoolSize = 100;
             this.bufferPoolManager = new BufferPoolManager(bufferPoolSize, diskManager, "LRU");
             this.catalog = new Catalog(bufferPoolManager);
             this.planner = new Planner(catalog);
-            this.logManager = new LogManager(dbFilePath + ".log");
+            this.logManager = new LogManager(DatabaseManager.getDbFilePath(dbName) + ".log");
             this.lockManager = new LockManager();
             this.transactionManager = new TransactionManager(lockManager, logManager);
-            this.executionEngine = new ExecutionEngine(bufferPoolManager, catalog, logManager, lockManager);
+            this.executionEngine = new ExecutionEngine(bufferPoolManager, catalog, logManager, lockManager, dbManager);
         } catch (IOException e) {
-            throw new RuntimeException("Failed to initialize database engine", e);
+            throw new RuntimeException("Failed to initialize database engine for " + dbName, e);
         }
     }
 
@@ -78,16 +84,22 @@ public class QueryProcessor {
                 return "Buffer pool cleared.";
             }
 
-            txn = transactionManager.begin();
-            System.out.println("Executing: " + sql + " in TxnID=" + txn.getTransactionId());
-
             Lexer lexer = new Lexer(sql);
             Parser parser = new Parser(lexer.tokenize());
             StatementNode ast = parser.parse();
             if (ast == null) {
-                transactionManager.abort(txn);
                 return "Empty statement.";
             }
+
+            // Database-level commands are handled outside of transactions for simplicity
+            if (ast instanceof CreateDatabaseStatementNode || ast instanceof ShowDatabasesStatementNode) {
+                PlanNode plan = planner.createPlan(ast);
+                TupleIterator executor = executionEngine.execute(plan, null);
+                return formatResults(executor);
+            }
+
+            txn = transactionManager.begin();
+            System.out.println("Executing: " + sql + " in TxnID=" + txn.getTransactionId());
 
             SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(catalog);
             semanticAnalyzer.analyze(ast,session);
@@ -131,11 +143,19 @@ public class QueryProcessor {
             results.add(iterator.next());
         }
 
+        Schema schema = iterator.getOutputSchema();
+        if (schema == null) {
+            if (results.size() == 1) {
+                return results.get(0).getValues().get(0).toString();
+            }
+            return "Query OK.";
+        }
+
+
         if (results.isEmpty()) {
             return "Query finished, 0 rows affected or returned.";
         }
 
-        Schema schema = iterator.getOutputSchema();
         StringBuilder sb = new StringBuilder();
         List<String> columnNames = schema.getColumnNames();
         List<Integer> columnWidths = new ArrayList<>();
@@ -159,7 +179,6 @@ public class QueryProcessor {
         // 3. 打印数据行 (null-safe)
         for (Tuple tuple : results) {
             List<String> values = tuple.getValues().stream()
-                    // --- 这就是最终的修复！ ---
                     .map(v -> (v.getValue() == null) ? "NULL" : v.getValue().toString())
                     .collect(Collectors.toList());
             sb.append(getRow(values, columnWidths)).append("\n");
@@ -189,11 +208,9 @@ public class QueryProcessor {
         return sb.toString();
     }
 
-    // 在 QueryProcessor.java 中添加这个新的 public 方法
     public TupleIterator executeMysql(String sql, Session session) throws Exception {
         Transaction txn = transactionManager.begin();
         try {
-            // 处理SQL语句，自动添加分号
             String normalizedSql = normalizeSqlForMysql(sql);
 
             Lexer lexer = new Lexer(normalizedSql);
@@ -211,11 +228,10 @@ public class QueryProcessor {
             return iterator;
         } catch (Exception e) {
             transactionManager.abort(txn);
-            throw e; // 将异常向上抛出，由 Protocol Handler 处理
+            throw e;
         }
     }
 
-    // 添加这个辅助方法来规范化SQL语句
     private String normalizeSqlForMysql(String sql) {
         if (sql == null || sql.trim().isEmpty()) {
             return sql;
@@ -223,7 +239,6 @@ public class QueryProcessor {
 
         String trimmedSql = sql.trim();
 
-        // 如果SQL语句不以分号结尾，自动添加分号
         if (!trimmedSql.endsWith(";")) {
             trimmedSql += ";";
         }
@@ -231,13 +246,6 @@ public class QueryProcessor {
         return trimmedSql;
     }
 
-    /**
-     * 为给定的SQL创建一个执行器迭代器。
-     * 这个方法假定一个事务已经由调用者开启。
-     * @param sql SQL 语句
-     * @param txn 当前的事务
-     * @return 一个可以遍历结果的元组迭代器
-     */
     public TupleIterator createExecutorForQuery(String sql, Transaction txn, Session session) throws Exception {
         String normalizedSql = normalizeSqlForMysql(sql);
 
@@ -247,6 +255,12 @@ public class QueryProcessor {
         if (ast == null) {
             return null;
         }
+
+        if (ast instanceof CreateDatabaseStatementNode || ast instanceof ShowDatabasesStatementNode) {
+            PlanNode plan = planner.createPlan(ast);
+            return executionEngine.execute(plan, null);
+        }
+
         SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(catalog);
         semanticAnalyzer.analyze(ast,session);
         PlanNode plan = planner.createPlan(ast);

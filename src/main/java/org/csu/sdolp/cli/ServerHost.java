@@ -12,7 +12,9 @@ import java.net.Socket;
 
 public class ServerHost {
     public static void main(String[] args) throws Exception {
-        final QueryProcessor queryProcessor = new QueryProcessor("minidb.data");
+        // --- 核心修复：使用一个明确的数据库名，而不是文件名 ---
+        final String DEFAULT_DB_NAME = "default";
+        final QueryProcessor queryProcessor = new QueryProcessor(DEFAULT_DB_NAME);
 
         RecoveryManager recoveryManager = new RecoveryManager(
                 queryProcessor.getLogManager(),
@@ -24,7 +26,7 @@ public class ServerHost {
 
         int port = 8848;
         ServerSocket serverSocket = new ServerSocket(port);
-        System.out.println("MiniDB server started. Listening on port " + port + "...");
+        System.out.println("MiniDB server started on database '"+ DEFAULT_DB_NAME +"'. Listening on port " + port + "...");
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {

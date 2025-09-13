@@ -13,6 +13,8 @@ public enum TokenType {
     WHERE,      // "WHERE"
     CREATE,     // "CREATE"
     TABLE,      // "TABLE"
+    DATABASE,   // "DATABASE"
+    DATABASES,  // "DATABASES"
     INDEX,      // "INDEX"
     INSERT,     // "INSERT"
     INTO,       // "INTO"
@@ -53,7 +55,7 @@ public enum TokenType {
     MAX,        // "MAX"
 
     SHOW,       // "SHOW"
-    TABLES,     // "TABLES" <-- 新增
+    TABLES,     // "TABLES"
     // ---- 标识符 (Identifier) ----
     IDENTIFIER, // 表名、列名等
 

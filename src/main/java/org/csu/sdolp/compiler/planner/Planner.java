@@ -33,6 +33,9 @@ public class Planner {
         if (ast instanceof CreateTableStatementNode stmt) {
             return createTablePlan(stmt);
         }
+        if (ast instanceof CreateDatabaseStatementNode stmt) {
+            return new CreateDatabasePlanNode(stmt.databaseName().getName());
+        }
         if (ast instanceof InsertStatementNode stmt) {
             return createInsertPlan(stmt);
         }
@@ -51,8 +54,11 @@ public class Planner {
         if (ast instanceof AlterTableStatementNode stmt) {
             return createAlterTablePlan(stmt);
         }
-        if (ast instanceof ShowTablesStatementNode stmt) { // <-- 新增
+        if (ast instanceof ShowTablesStatementNode stmt) {
             return new ShowTablesPlanNode();
+        }
+        if (ast instanceof ShowDatabasesStatementNode) {
+            return new ShowDatabasesPlanNode();
         }
         if (ast instanceof CreateIndexStatementNode stmt) {
             return createIndexPlan(stmt);
