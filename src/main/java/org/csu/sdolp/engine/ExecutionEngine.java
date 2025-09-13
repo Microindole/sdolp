@@ -53,6 +53,9 @@ public class ExecutionEngine {
         if (plan instanceof ShowDatabasesPlanNode showDbPlan) { // <-- 新增
             return new ShowDatabasesExecutor(showDbPlan, dbManager);
         }
+        if (plan instanceof DropDatabasePlanNode dropDbPlan) {
+            return new DropDatabaseExecutor(dropDbPlan, dbManager);
+        }
 
         // --- DML and Scan Executors ---
         if (plan instanceof InsertPlanNode insertPlan) {

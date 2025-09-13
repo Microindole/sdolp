@@ -98,6 +98,11 @@ public class Lexer {
 
         char currentChar = peek();
 
+        // 对反引号 (`) 的处理
+        if (currentChar == '`') {
+            return readQuotedIdentifier();
+        }
+
         // 识别标识符或关键字
         if (isLetter(currentChar)) {
             return readIdentifierOrKeyword();
@@ -154,7 +159,23 @@ public class Lexer {
             default:
                 return consumeAndReturn(TokenType.ILLEGAL, String.valueOf(currentChar));
         }
+    }
 
+    private Token readQuotedIdentifier() {
+        int startCol = column;
+        advance(); // 跳过起始的反引号
+        int startPos = position;
+        while (position < input.length() && peek() != '`') {
+            advance();
+        }
+        String text = input.substring(startPos, position);
+        if (position >= input.length() || peek() != '`') {
+            // 如果没有找到结束的反引号，这是一个语法错误
+            return new Token(TokenType.ILLEGAL, text, line, startCol);
+        }
+        advance(); // 跳过结束的反引号
+        // 被反引号包裹的内容强制视为标识符，即使它是关键字
+        return new Token(TokenType.IDENTIFIER, text, line, startCol);
     }
 
     private Token readIdentifierOrKeyword() {

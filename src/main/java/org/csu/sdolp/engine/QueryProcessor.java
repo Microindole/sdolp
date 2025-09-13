@@ -9,6 +9,7 @@ import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.compiler.lexer.Lexer;
 import org.csu.sdolp.compiler.parser.Parser;
 import org.csu.sdolp.compiler.parser.ast.CreateDatabaseStatementNode;
+import org.csu.sdolp.compiler.parser.ast.DropDatabaseStatementNode;
 import org.csu.sdolp.compiler.parser.ast.ShowDatabasesStatementNode;
 import org.csu.sdolp.compiler.parser.ast.StatementNode;
 import org.csu.sdolp.compiler.planner.Planner;
@@ -92,7 +93,9 @@ public class QueryProcessor {
             }
 
             // Database-level commands are handled outside of transactions for simplicity
-            if (ast instanceof CreateDatabaseStatementNode || ast instanceof ShowDatabasesStatementNode) {
+            if (ast instanceof CreateDatabaseStatementNode ||
+                    ast instanceof ShowDatabasesStatementNode ||
+                    ast instanceof DropDatabaseStatementNode) {
                 PlanNode plan = planner.createPlan(ast);
                 TupleIterator executor = executionEngine.execute(plan, null);
                 return formatResults(executor);

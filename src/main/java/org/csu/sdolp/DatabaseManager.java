@@ -38,4 +38,23 @@ public class DatabaseManager {
     public static String getDbFilePath(String dbName) {
         return DB_ROOT_DIR + File.separator + dbName + File.separator + "minidb.data";
     }
+
+    public void dropDatabase(String dbName) {
+        File dbDir = new File(DB_ROOT_DIR, dbName);
+        if (!dbDir.exists() || !dbDir.isDirectory()) {
+            throw new RuntimeException("Database '" + dbName + "' does not exist.");
+        }
+        // 递归删除整个目录
+        deleteDirectory(dbDir);
+    }
+
+    private void deleteDirectory(File directory) {
+        File[] allContents = directory.listFiles();
+        if (allContents != null) {
+            for (File file : allContents) {
+                deleteDirectory(file);
+            }
+        }
+        directory.delete();
+    }
 }

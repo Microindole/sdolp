@@ -51,6 +51,9 @@ public class Planner {
         if (ast instanceof DropTableStatementNode stmt) {
             return createDropTablePlan(stmt);
         }
+        if (ast instanceof DropDatabaseStatementNode stmt) {
+            return new DropDatabasePlanNode(stmt.databaseName().getName());
+        }
         if (ast instanceof AlterTableStatementNode stmt) {
             return createAlterTablePlan(stmt);
         }

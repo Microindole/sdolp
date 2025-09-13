@@ -1,6 +1,7 @@
 package org.csu.sdolp.cli;
 
 import org.csu.sdolp.catalog.Catalog;
+import org.csu.sdolp.common.exception.ParseException;
 import org.csu.sdolp.common.exception.SemanticException;
 import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
@@ -246,9 +247,8 @@ public class MysqlProtocolHandler implements Runnable {
                 }
 
                 Transaction txn = null;
-                TransactionManager transactionManager = queryProcessor.getTransactionManager();
-
                 try {
+                    TransactionManager transactionManager = queryProcessor.getTransactionManager();
                     txn = transactionManager.begin();
                     TupleIterator iterator = queryProcessor.createExecutorForQuery(sql, txn, this.session);
 
@@ -276,6 +276,15 @@ public class MysqlProtocolHandler implements Runnable {
 
                     transactionManager.commit(txn);
 
+                } catch (ParseException e) {
+                    // --- 核心修复：捕获语法解析异常，并返回一个 OK_Packet ---
+                    System.err.println("Unsupported query syntax from client, returning OK packet. SQL: " + sql);
+                    System.err.println("Parse Error: " + e.getMessage());
+
+                    // 之前是发送空结果集，现在改为发送标准的 OK_Packet
+                    // 这对于客户端来说是一个更清晰、更不容易出错的信号
+                    sendOkPacket(out, serverSequenceId, 0, 0);
+
                 } catch (Exception e) {
                     System.err.println("Error executing query: " + e.getMessage());
                     if (e instanceof SemanticException && e.getMessage().toLowerCase().contains("access denied")) {
@@ -284,8 +293,8 @@ public class MysqlProtocolHandler implements Runnable {
                         sendErrorPacket(out, serverSequenceId, 1064, "42000", "Error: " + e.getMessage());
                     }
 
-                    if (txn != null && txn.getState() == Transaction.State.ACTIVE) {
-                        transactionManager.abort(txn);
+                    if (queryProcessor != null && txn != null && txn.getState() == Transaction.State.ACTIVE) {
+                        queryProcessor.getTransactionManager().abort(txn);
                     }
                 }
                 break;

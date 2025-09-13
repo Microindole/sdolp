@@ -84,10 +84,19 @@ public class Parser {
             return parseUpdateStatement();
         }
         if (match(TokenType.DROP)) {
+            if (peek().type() == TokenType.DATABASE) {
+                return parseDropDatabaseStatement();
+            }
             return parseDropTableStatement();
         }
 
         throw new ParseException(peek(), "a valid statement (CREATE, SELECT, INSERT, DELETE, DROP, etc.)");
+    }
+
+    private StatementNode parseDropDatabaseStatement() {
+        consume(TokenType.DATABASE, "Expected 'DATABASE' after 'DROP'");
+        IdentifierNode dbName = new IdentifierNode(consume(TokenType.IDENTIFIER, "database name").lexeme());
+        return new DropDatabaseStatementNode(dbName);
     }
 
     private StatementNode parseCreateDatabaseStatement() {
