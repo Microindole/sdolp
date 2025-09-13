@@ -58,6 +58,7 @@ public class Lexer {
         keywords.put("alter", TokenType.ALTER);
         keywords.put("add", TokenType.ADD);
         keywords.put("column", TokenType.COLUMN);
+        keywords.put("columns", TokenType.COLUMNS);
         keywords.put("group", TokenType.GROUP);
         keywords.put("count", TokenType.COUNT);
         keywords.put("sum", TokenType.SUM);

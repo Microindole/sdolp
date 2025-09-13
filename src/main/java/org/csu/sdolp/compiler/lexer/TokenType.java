@@ -52,6 +52,7 @@ public enum TokenType {
     ALTER,      // "ALTER"
     ADD,        // "ADD"
     COLUMN,     // "COLUMN"
+    COLUMNS,    // "COLUMNS
     // 关键字 (Phase 4)
     GROUP,      // "GROUP"
     COUNT,      // "COUNT"

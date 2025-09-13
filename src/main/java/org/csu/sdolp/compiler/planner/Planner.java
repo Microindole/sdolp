@@ -62,6 +62,12 @@ public class Planner {
         if (ast instanceof ShowTablesStatementNode stmt) {
             return new ShowTablesPlanNode();
         }
+        if (ast instanceof ShowColumnsStatementNode stmt) {
+            return new ShowColumnsPlanNode(stmt.tableName().getName());
+        }
+        if (ast instanceof ShowCreateTableStatementNode stmt) {
+            return new ShowCreateTablePlanNode(stmt.tableName().getName());
+        }
         if (ast instanceof ShowDatabasesStatementNode) {
             return new ShowDatabasesPlanNode();
         }

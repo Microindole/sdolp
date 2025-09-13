@@ -3,6 +3,7 @@ package org.csu.sdolp.cli;
 import org.csu.sdolp.catalog.Catalog;
 import org.csu.sdolp.common.exception.ParseException;
 import org.csu.sdolp.common.exception.SemanticException;
+import org.csu.sdolp.common.model.Column;
 import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.engine.QueryProcessor;
@@ -216,12 +217,10 @@ public class MysqlProtocolHandler implements Runnable {
 
         System.out.println("[ConnID: " + connectionId + ", DB: " + currentDb + "] Received command type: 0x" + Integer.toHexString(commandType));
 
-
         switch (commandType) {
             case 0x01: // COM_QUIT
                 clientSocket.close();
                 break;
-
             case 0x02: // COM_INIT_DB (USE database)
                 String dbName = new String(commandPacket.payload, 1, commandPacket.payload.length - 1, StandardCharsets.UTF_8);
                 try {
@@ -231,11 +230,9 @@ public class MysqlProtocolHandler implements Runnable {
                     sendErrorPacket(out, serverSequenceId, 1049, "42000", "Unknown database '" + dbName + "'");
                 }
                 break;
-
             case 0x03: // COM_QUERY
                 String sql = new String(commandPacket.payload, 1, commandPacket.payload.length - 1, StandardCharsets.UTF_8);
                 System.out.println("[ConnID: " + connectionId + ", DB: " + currentDb + "] Received SQL: " + sql);
-
 
                 if (queryProcessor == null && !(sql.toLowerCase().contains("create database") || sql.toLowerCase().contains("show databases"))) {
                     sendErrorPacket(out, serverSequenceId, 1046, "3D000", "No database selected");
@@ -259,14 +256,15 @@ public class MysqlProtocolHandler implements Runnable {
                             results.add(iterator.next());
                         }
 
-                        serverSequenceId = sendResultSetHeader(out, serverSequenceId, schema.getColumns().size());
-                        serverSequenceId = sendFieldPackets(out, serverSequenceId, schema);
-                        serverSequenceId = sendEofPacket(out, serverSequenceId);
+                        int currentSeqId = serverSequenceId;
+                        currentSeqId = sendResultSetHeader(out, currentSeqId, schema.getColumns().size());
+                        currentSeqId = sendFieldPackets(out, currentSeqId, schema);
+                        currentSeqId = sendEofPacket(out, currentSeqId);
 
                         if (!results.isEmpty()) {
-                            serverSequenceId = sendRowPackets(out, serverSequenceId, results);
+                            currentSeqId = sendRowPackets(out, currentSeqId, results);
                         }
-                        sendEofPacket(out, serverSequenceId);
+                        sendEofPacket(out, currentSeqId);
                     } else {
                         if (iterator != null && iterator.hasNext()) {
                             iterator.next();
@@ -277,16 +275,18 @@ public class MysqlProtocolHandler implements Runnable {
                     transactionManager.commit(txn);
 
                 } catch (ParseException e) {
-                    // --- 核心修复：捕获语法解析异常，并返回一个 OK_Packet ---
-                    System.err.println("Unsupported query syntax from client, returning OK packet. SQL: " + sql);
+                    System.err.println("Unsupported query syntax from client, returning empty result set. SQL: " + sql);
                     System.err.println("Parse Error: " + e.getMessage());
 
-                    // 之前是发送空结果集，现在改为发送标准的 OK_Packet
-                    // 这对于客户端来说是一个更清晰、更不容易出错的信号
-                    sendOkPacket(out, serverSequenceId, 0, 0);
+                    int currentSeqId = serverSequenceId;
+                    currentSeqId = sendResultSetHeader(out, currentSeqId, 1);
+                    currentSeqId = sendSimpleFieldPacket(out, currentSeqId, "Result");
+                    currentSeqId = sendEofPacket(out, currentSeqId);
+                    sendEofPacket(out, currentSeqId);
 
                 } catch (Exception e) {
                     System.err.println("Error executing query: " + e.getMessage());
+                    e.printStackTrace(); // 打印完整堆栈以供调试
                     if (e instanceof SemanticException && e.getMessage().toLowerCase().contains("access denied")) {
                         sendErrorPacket(out, serverSequenceId, 1142, "42000", e.getMessage());
                     } else {
@@ -298,6 +298,7 @@ public class MysqlProtocolHandler implements Runnable {
                     }
                 }
                 break;
+
             default:
                 sendOkPacket(out, serverSequenceId, 0, 0);
                 break;
@@ -399,21 +400,46 @@ public class MysqlProtocolHandler implements Runnable {
     }
 
     private int sendFieldPackets(OutputStream out, int sequenceId, Schema schema) throws IOException {
-        for (org.csu.sdolp.common.model.Column col : schema.getColumns()) {
+        for (Column col : schema.getColumns()) {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            bos.write(writeLengthEncodedString("def"));
-            bos.write(writeLengthEncodedString("minidb"));
-            bos.write(writeLengthEncodedString(""));
-            bos.write(writeLengthEncodedString(""));
-            bos.write(writeLengthEncodedString(col.getName()));
-            bos.write(writeLengthEncodedString(col.getName()));
-            bos.write(0x0c);
-            bos.write(writeInt(33, 2));
-            bos.write(writeInt(1024, 4));
-            bos.write((byte) 0xfd);
-            bos.write(writeInt(0, 2));
-            bos.write((byte) 0x00);
-            bos.write(new byte[2]);
+            bos.write(writeLengthEncodedString("def"));           // catalog
+            bos.write(writeLengthEncodedString(this.currentDb != null ? this.currentDb : "")); // database
+            bos.write(writeLengthEncodedString(""));              // table name (can be empty)
+            bos.write(writeLengthEncodedString(""));              // org_table
+            bos.write(writeLengthEncodedString(col.getName()));   // name
+            bos.write(writeLengthEncodedString(col.getName()));   // org_name
+            bos.write(0x0c);                                      // length of fixed fields
+
+            int charset;
+            byte fieldType;
+            switch (col.getType()) {
+                case INT:
+                case BOOLEAN:
+                    charset = 63; // mysql_charset_bin
+                    fieldType = (byte) 0x03; // FIELD_TYPE_LONG
+                    break;
+                case DECIMAL:
+                    charset = 63; // mysql_charset_bin
+                    fieldType = (byte) 0xf6; // FIELD_TYPE_NEWDECIMAL
+                    break;
+                case DATE:
+                    charset = 63; // mysql_charset_bin
+                    fieldType = (byte) 0x0a; // FIELD_TYPE_DATE
+                    break;
+                case VARCHAR:
+                default:
+                    charset = 33; // mysql_charset_utf8
+                    fieldType = (byte) 0xfd; // FIELD_TYPE_VARCHAR
+                    break;
+            }
+
+            bos.write(writeInt(charset, 2));        // character set
+            bos.write(writeInt(1024, 4));           // column length (can be a generic large value)
+            bos.write(fieldType);                                // type
+            bos.write(writeInt(0, 2));              // flags
+            bos.write((byte) 0x00);                             // decimals
+            bos.write(new byte[2]);                             // filler
+
             sequenceId = writePacket(out, bos.toByteArray(), sequenceId);
         }
         return sequenceId;

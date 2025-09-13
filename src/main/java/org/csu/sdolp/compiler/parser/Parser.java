@@ -59,19 +59,13 @@ public class Parser {
                 consume(TokenType.CREATE, "'CREATE' keyword");
                 return parseCreateUserStatement();
             }
-            if (match(TokenType.USE)) {
-                return parseUseDatabaseStatement();
-            }
             throw new ParseException(nextToken, "Expected 'TABLE', 'DATABASE', or 'INDEX' after 'CREATE'");
         }
         if (match(TokenType.GRANT)) {
             return parseGrantStatement();
         }
         if (match(TokenType.SHOW)) {
-            if (peek().type() == TokenType.DATABASES) {
-                return parseShowDatabasesStatement();
-            }
-            return parseShowTablesStatement();
+            return parseShowStatement();
         }
         if (match(TokenType.SELECT)) {
             return parseSelectStatement();
@@ -91,8 +85,48 @@ public class Parser {
             }
             return parseDropTableStatement();
         }
+        if (match(TokenType.USE)) {
+            return parseUseDatabaseStatement();
+        }
 
         throw new ParseException(peek(), "a valid statement (CREATE, SELECT, INSERT, DELETE, DROP, etc.)");
+    }
+
+    private StatementNode parseShowStatement() {
+        if (peek().type() == TokenType.DATABASES) {
+            consume(TokenType.DATABASES, "Expected 'DATABASES' after 'SHOW'");
+            return new ShowDatabasesStatementNode();
+        }
+
+        match(TokenType.FULL);
+
+        if (peek().type() == TokenType.COLUMNS) {
+            consume(TokenType.COLUMNS, "Expected 'COLUMNS' after 'SHOW'");
+            consume(TokenType.FROM, "Expected 'FROM' after 'COLUMNS'");
+            IdentifierNode tableName = parseTableName();
+            return new ShowColumnsStatementNode(tableName);
+        }
+
+        if (peek().type() == TokenType.TABLES) {
+            consume(TokenType.TABLES, "Expected 'TABLES' after 'SHOW'");
+            if (match(TokenType.FROM)) {
+                consume(TokenType.IDENTIFIER, "Expected database name after 'FROM'");
+            }
+            if (match(TokenType.WHERE)) {
+                while (peek().type() != TokenType.SEMICOLON && peek().type() != TokenType.EOF) {
+                    advance();
+                }
+            }
+            return new ShowTablesStatementNode();
+        }
+        if (peek().type() == TokenType.CREATE) {
+            consume(TokenType.CREATE, "Expected 'CREATE' after 'SHOW'");
+            consume(TokenType.TABLE, "Expected 'TABLE' after 'CREATE'");
+            IdentifierNode tableName = parseTableName();
+            return new ShowCreateTableStatementNode(tableName);
+        }
+
+        throw new ParseException(peek(), "Expected DATABASES, COLUMNS, or TABLES after 'SHOW'");
     }
 
     private StatementNode parseUseDatabaseStatement() {
@@ -112,15 +146,8 @@ public class Parser {
         return new CreateDatabaseStatementNode(new IdentifierNode(dbNameToken.lexeme()));
     }
 
-    private StatementNode parseShowDatabasesStatement() {
-        consume(TokenType.DATABASES, "Expected 'DATABASES' after 'SHOW'");
-        return new ShowDatabasesStatementNode();
-    }
-
-
     private CreateUserStatementNode parseCreateUserStatement() {
         consume(TokenType.USER, "'USER' keyword after 'CREATE'");
-        // 用户名在MySQL中通常是字符串
         IdentifierNode username = new IdentifierNode(consume(TokenType.STRING_CONST, "username as a string literal").lexeme());
         consume(TokenType.IDENTIFIED, "'IDENTIFIED' keyword");
         consume(TokenType.BY, "'BY' keyword");
@@ -130,17 +157,14 @@ public class Parser {
 
     private GrantStatementNode parseGrantStatement() {
         List<IdentifierNode> privileges = new ArrayList<>();
-        // 解析权限列表，例如 SELECT, INSERT
         do {
             Token privilegeToken = peek();
             TokenType type = privilegeToken.type();
 
-            // 权限类型可以是具体的关键字(SELECT等)，也可以是通用的标识符(例如ALL)
             if (type == TokenType.SELECT || type == TokenType.INSERT || type == TokenType.UPDATE || type == TokenType.DELETE || type == TokenType.IDENTIFIER) {
-                advance(); // 消耗掉这个Token
+                advance();
                 privileges.add(new IdentifierNode(privilegeToken.lexeme()));
             } else {
-                // 如果不是以上任何一种，则说明语法错误
                 throw new ParseException(privilegeToken, "a valid privilege type (e.g., SELECT, INSERT, ALL)");
             }
         } while (match(TokenType.COMMA));
@@ -150,21 +174,6 @@ public class Parser {
         consume(TokenType.TO, "'TO' keyword");
         IdentifierNode username = new IdentifierNode(consume(TokenType.STRING_CONST, "username as a string literal").lexeme());
         return new GrantStatementNode(privileges, tableName, username);
-    }
-
-    private StatementNode parseShowTablesStatement() {
-        match(TokenType.FULL);
-        consume(TokenType.TABLES, "Expected 'TABLES' after 'SHOW'");
-        if (match(TokenType.FROM)) {
-            consume(TokenType.IDENTIFIER, "Expected database name after 'FROM'");
-        }
-        if (match(TokenType.WHERE)) {
-            while (peek().type() != TokenType.SEMICOLON && peek().type() != TokenType.EOF) {
-                advance();
-            }
-        }
-
-        return new ShowTablesStatementNode();
     }
 
     private DropTableStatementNode parseDropTableStatement() {
@@ -221,7 +230,7 @@ public class Parser {
                 dataTypeToken.type() == TokenType.IDENTIFIER) {
             advance();
         } else {
-            throw new ParseException(peek(), "data type (e.g., INT, VARCHAR)");
+            throw new ParseException(peek(), "a valid data type (e.g., INT, VARCHAR, DECIMAL, etc.)");
         }
         IdentifierNode dataType = new IdentifierNode(dataTypeToken.lexeme());
         return new ColumnDefinitionNode(columnName, dataType);
@@ -240,14 +249,17 @@ public class Parser {
             }
         }
         consume(TokenType.FROM, "'FROM' keyword");
-        IdentifierNode fromTable = new IdentifierNode(consume(TokenType.IDENTIFIER, "table name").lexeme());
+
+        IdentifierNode fromTable = parseTableName();
+
         IdentifierNode joinTable = null;
         ExpressionNode joinCondition = null;
         if (match(TokenType.JOIN)) {
-            joinTable = new IdentifierNode(consume(TokenType.IDENTIFIER, "table name after JOIN").lexeme());
+            joinTable = parseTableName();
             consume(TokenType.ON, "'ON' keyword after JOIN table");
             joinCondition = parseExpression();
         }
+
         ExpressionNode whereClause = null;
         if (match(TokenType.WHERE)) {
             whereClause = parseExpression();
@@ -272,7 +284,22 @@ public class Parser {
         if (match(TokenType.LIMIT)) {
             limitClause = parseLimitClause();
         }
+        if (peek().type() == TokenType.COMMA) {
+            match(TokenType.COMMA);
+            consume(TokenType.INTEGER_CONST, "integer value for LIMIT count");
+        }
+
         return new SelectStatementNode(selectList, fromTable, joinTable, joinCondition,whereClause, isSelectAll, groupByClause, orderByClause, limitClause);
+    }
+
+    private IdentifierNode parseTableName() {
+        Token firstPart = consume(TokenType.IDENTIFIER, "database or table name");
+        if (match(TokenType.DOT)) {
+            Token tableNameToken = consume(TokenType.IDENTIFIER, "table name after '.'");
+            return new IdentifierNode(tableNameToken.lexeme());
+        } else {
+            return new IdentifierNode(firstPart.lexeme());
+        }
     }
 
     private InsertStatementNode parseInsertStatement() {
@@ -392,15 +419,6 @@ public class Parser {
 
     private ExpressionNode parsePrimaryExpression() {
         if (match(TokenType.INTEGER_CONST, TokenType.DECIMAL_CONST, TokenType.STRING_CONST, TokenType.TRUE, TokenType.FALSE)) {
-            return new LiteralNode(previous());
-        }
-        if (match(TokenType.INTEGER_CONST, TokenType.STRING_CONST, TokenType.TRUE, TokenType.FALSE)) {
-            return new LiteralNode(previous());
-        }
-        if (AGGREGATE_FUNCTIONS.contains(peek().type())) {
-            return parseAggregateExpression();
-        }
-        if (match(TokenType.INTEGER_CONST, TokenType.STRING_CONST)) {
             return new LiteralNode(previous());
         }
         if (AGGREGATE_FUNCTIONS.contains(peek().type())) {

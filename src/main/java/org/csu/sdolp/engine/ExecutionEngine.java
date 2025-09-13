@@ -47,11 +47,17 @@ public class ExecutionEngine {
 
     private TupleIterator buildExecutorTree(PlanNode plan, Transaction txn) throws IOException, InterruptedException {
         // --- DDL/DCL Executors for Databases ---
-        if (plan instanceof CreateDatabasePlanNode createDbPlan) { // <-- 新增
+        if (plan instanceof CreateDatabasePlanNode createDbPlan) {
             return new CreateDatabaseExecutor(createDbPlan, dbManager);
         }
-        if (plan instanceof ShowDatabasesPlanNode showDbPlan) { // <-- 新增
+        if (plan instanceof ShowDatabasesPlanNode showDbPlan) {
             return new ShowDatabasesExecutor(showDbPlan, dbManager);
+        }
+        if (plan instanceof ShowColumnsPlanNode showColumnsPlan) {
+            return new ShowColumnsExecutor(showColumnsPlan, catalog);
+        }
+        if (plan instanceof ShowCreateTablePlanNode showCreateTablePlan) {
+            return new ShowCreateTableExecutor(showCreateTablePlan);
         }
         if (plan instanceof DropDatabasePlanNode dropDbPlan) {
             return new DropDatabaseExecutor(dropDbPlan, dbManager);
