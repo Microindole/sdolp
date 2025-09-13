@@ -4,4 +4,7 @@ public enum DataType {
     INT,
     VARCHAR,
     // 其他数据类型...
+    DECIMAL,
+    DATE,
+    BOOLEAN
 }

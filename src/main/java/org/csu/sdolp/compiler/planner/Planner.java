@@ -12,6 +12,8 @@ import org.csu.sdolp.compiler.lexer.TokenType;
 import org.csu.sdolp.compiler.parser.ast.*;
 import org.csu.sdolp.compiler.planner.plan.*;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -89,16 +91,43 @@ public class Planner {
 
     private PlanNode createInsertPlan(InsertStatementNode ast) {
         TableInfo tableInfo = catalog.getTable(ast.tableName().getName());
+        Schema schema = tableInfo.getSchema();
         List<Value> values = new ArrayList<>();
-        for (ExpressionNode expr : ast.values()) {
+
+        // --- 核心修改：根据 Schema 类型来解析字面量 ---
+        for (int i = 0; i < ast.values().size(); i++) {
+            ExpressionNode expr = ast.values().get(i);
+            // 找到此位置对应的列定义
+            String colName = ast.columns().get(i).getName();
+            Column column = schema.getColumn(colName);
+            DataType expectedType = column.getType();
+
             if (expr instanceof LiteralNode literal) {
-                if (literal.literal().type() == TokenType.INTEGER_CONST) {
-                    values.add(new Value(Integer.parseInt(literal.literal().lexeme())));
-                } else if (literal.literal().type() == TokenType.STRING_CONST) {
-                    values.add(new Value(literal.literal().lexeme()));
+                String lexeme = literal.literal().lexeme();
+                TokenType tokenType = literal.literal().type();
+
+                switch (expectedType) {
+                    case INT:
+                        values.add(new Value(Integer.parseInt(lexeme)));
+                        break;
+                    case VARCHAR:
+                        values.add(new Value(lexeme));
+                        break;
+                    case DECIMAL:
+                        values.add(new Value(new BigDecimal(lexeme)));
+                        break;
+                    case DATE:
+                        values.add(new Value(LocalDate.parse(lexeme)));
+                        break;
+                    case BOOLEAN:
+                        values.add(new Value(tokenType == TokenType.TRUE));
+                        break;
+                    default:
+                        throw new IllegalStateException("Unsupported data type in planner for INSERT: " + expectedType);
                 }
             }
         }
+
         Tuple tuple = new Tuple(values);
         return new InsertPlanNode(tableInfo, List.of(tuple));
     }

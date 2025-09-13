@@ -2,8 +2,10 @@ package org.csu.sdolp.common.model;
 
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.util.Objects;
 
 /**
@@ -20,6 +22,20 @@ public class Value {
 
     public Value(String value) {
         this.type = DataType.VARCHAR;
+        this.value = value;
+    }
+    public Value(BigDecimal value) {
+        this.type = DataType.DECIMAL;
+        this.value = value;
+    }
+
+    public Value(LocalDate value) {
+        this.type = DataType.DATE;
+        this.value = value;
+    }
+
+    public Value(Boolean value) {
+        this.type = DataType.BOOLEAN;
         this.value = value;
     }
     // ======(Phase 4 Bug Fix) ======
@@ -51,6 +67,23 @@ public class Value {
                 out.writeInt(bytes.length); // 先写入字符串长度
                 out.write(bytes);          // 再写入字符串内容
                 break;
+            case DECIMAL:
+                // 将 BigDecimal 转换为字符串进行存储
+                String decimalStr = ((BigDecimal) value).toPlainString();
+                byte[] decimalBytes = decimalStr.getBytes(StandardCharsets.UTF_8);
+                out.writeInt(decimalBytes.length);
+                out.write(decimalBytes);
+                break;
+            case DATE:
+                // 将 LocalDate 转换为 ISO 格式的字符串 (e.g., "2025-09-13")
+                String dateStr = ((LocalDate) value).toString();
+                byte[] dateBytes = dateStr.getBytes(StandardCharsets.UTF_8);
+                out.writeInt(dateBytes.length);
+                out.write(dateBytes);
+                break;
+            case BOOLEAN:
+                out.writeBoolean((Boolean) value);
+                break;
             default:
                 throw new UnsupportedOperationException("Unsupported data type for serialization: " + type);
         }
@@ -71,6 +104,18 @@ public class Value {
                 byte[] bytes = new byte[length];
                 buffer.get(bytes);
                 return new Value(new String(bytes, StandardCharsets.UTF_8));
+            case DECIMAL:
+                int decimalLen = buffer.getInt();
+                byte[] decimalBytes = new byte[decimalLen];
+                buffer.get(decimalBytes);
+                return new Value(new BigDecimal(new String(decimalBytes, StandardCharsets.UTF_8)));
+            case DATE:
+                int dateLen = buffer.getInt();
+                byte[] dateBytes = new byte[dateLen];
+                buffer.get(dateBytes);
+                return new Value(LocalDate.parse(new String(dateBytes, StandardCharsets.UTF_8)));
+            case BOOLEAN:
+                return new Value(buffer.get() == 1);
             default:
                 throw new UnsupportedOperationException("Unsupported data type for deserialization: " + type);
         }

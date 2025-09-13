@@ -36,10 +36,12 @@ public class InteractiveShell {
 
             System.out.println("Type 'exit;' to quit.");
 
+            String currentDb = "default";
+
             StringBuilder commandBuilder = new StringBuilder();
             while (true) {
                 // 根据登录的用户名显示不同的提示符
-                System.out.print(username + "@miniDB> ");
+                System.out.print(username + "@" + currentDb + "> ");
                 String line = consoleScanner.nextLine();
 
                 commandBuilder.append(line.trim()).append(" ");
@@ -66,6 +68,9 @@ public class InteractiveShell {
 
                     String serverResponse = in.readLine();
                     if (serverResponse != null) {
+                        if (serverResponse.toLowerCase().startsWith("database changed to")) {
+                            currentDb = singleSql.split("\\s+")[1].replace(";", "");
+                        }
                         System.out.println(serverResponse.replace("<br>", "\n"));
                     } else {
                         System.out.println("Connection to server lost.");

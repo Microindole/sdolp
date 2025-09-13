@@ -11,6 +11,8 @@ import org.csu.sdolp.compiler.lexer.TokenType;
 import org.csu.sdolp.compiler.parser.ast.*;
 
 import java.io.IOException;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -156,8 +158,20 @@ public class SemanticAnalyzer {
             DataType expectedType = schemaCol.getType();
             DataType actualType = getLiteralType(literal);
 
-            if (expectedType != actualType) {
-                throw new SemanticException("Data type mismatch for column '" + colName + "'. Expected " + expectedType + " but got " + actualType + ".");
+            // 允许将整数插入 DECIMAL 类型的列
+            if (expectedType == DataType.DECIMAL && actualType == DataType.INT) {
+                // This is a valid cast, continue.
+            } else if (expectedType != actualType) {
+                // 检查是否是合法的 DATE 字符串
+                if (expectedType == DataType.DATE && actualType == DataType.VARCHAR) {
+                    try {
+                        LocalDate.parse(literal.literal().lexeme());
+                    } catch (DateTimeParseException e) {
+                        throw new SemanticException("Invalid DATE format for column '" + colName + "'. Expected 'YYYY-MM-DD'.");
+                    }
+                } else {
+                    throw new SemanticException("Data type mismatch for column '" + colName + "'. Expected " + expectedType + " but got " + actualType + ".");
+                }
             }
         }
     }
@@ -319,12 +333,22 @@ public class SemanticAnalyzer {
     }
 
     private DataType getLiteralType(LiteralNode literal) {
-        if (literal.literal().type() == TokenType.INTEGER_CONST) {
+        TokenType type = literal.literal().type();
+        String lexeme = literal.literal().lexeme();
+
+        if (type == TokenType.INTEGER_CONST) {
             return DataType.INT;
         }
-        if (literal.literal().type() == TokenType.STRING_CONST) {
+        if (type == TokenType.DECIMAL_CONST) {
+            return DataType.DECIMAL;
+        }
+        if (type == TokenType.STRING_CONST) {
             return DataType.VARCHAR;
         }
+        if (type == TokenType.TRUE || type == TokenType.FALSE) {
+            return DataType.BOOLEAN;
+        }
+
         throw new SemanticException("Unsupported literal type: " + literal.literal().type());
     }
 

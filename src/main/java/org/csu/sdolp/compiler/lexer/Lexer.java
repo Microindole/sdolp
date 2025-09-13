@@ -34,11 +34,17 @@ public class Lexer {
         keywords.put("insert", TokenType.INSERT);
         keywords.put("into", TokenType.INTO);
         keywords.put("values", TokenType.VALUES);
+        keywords.put("use", TokenType.USE);
         keywords.put("delete", TokenType.DELETE);
         keywords.put("update", TokenType.UPDATE);
         keywords.put("set", TokenType.SET);
         keywords.put("int", TokenType.INT);
         keywords.put("varchar", TokenType.VARCHAR);
+        keywords.put("decimal", TokenType.DECIMAL);
+        keywords.put("date", TokenType.DATE);
+        keywords.put("boolean", TokenType.BOOLEAN);
+        keywords.put("true", TokenType.TRUE);
+        keywords.put("false", TokenType.FALSE);
         keywords.put("order", TokenType.ORDER);
         keywords.put("by", TokenType.BY);
         keywords.put("asc", TokenType.ASC);
@@ -195,6 +201,20 @@ public class Lexer {
         int startCol = column;
         while (position < input.length() && isDigit(peek())) {
             advance();
+        }
+
+        // --- 核心修改：检查并处理小数点 ---
+        if (position < input.length() && peek() == '.') {
+            // 确认小数点后面还有数字，以区分 `table.column` 语法
+            if (isDigit(peekNext())) {
+                advance(); // 消耗掉 '.'
+                while (position < input.length() && isDigit(peek())) {
+                    advance();
+                }
+                // 如果包含小数点，则识别为 DECIMAL_CONST
+                String number = input.substring(startPos, position);
+                return new Token(TokenType.DECIMAL_CONST, number, line, startCol);
+            }
         }
         String number = input.substring(startPos, position);
         return new Token(TokenType.INTEGER_CONST, number, line, startCol);

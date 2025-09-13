@@ -19,6 +19,7 @@ import org.csu.sdolp.executor.TupleIterator;
 import org.csu.sdolp.storage.buffer.BufferPoolManager;
 import org.csu.sdolp.storage.disk.DiskManager;
 import org.csu.sdolp.transaction.LockManager;
+import org.csu.sdolp.transaction.RecoveryManager;
 import org.csu.sdolp.transaction.Transaction;
 import org.csu.sdolp.transaction.TransactionManager;
 import org.csu.sdolp.transaction.log.LogManager;
@@ -61,6 +62,15 @@ public class QueryProcessor {
             this.lockManager = new LockManager();
             this.transactionManager = new TransactionManager(lockManager, logManager);
             this.executionEngine = new ExecutionEngine(bufferPoolManager, catalog, logManager, lockManager, dbManager);
+            System.out.println("Initializing or loading database '" + dbName + "'. Starting recovery process...");
+            RecoveryManager recoveryManager = new RecoveryManager(
+                    this.logManager,
+                    this.bufferPoolManager,
+                    this.catalog,
+                    this.lockManager
+            );
+            recoveryManager.recover();
+            System.out.println("Recovery process for database '" + dbName + "' completed.");
         } catch (IOException e) {
             throw new RuntimeException("Failed to initialize database engine for " + dbName, e);
         }

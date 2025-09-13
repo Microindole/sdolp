@@ -1,12 +1,22 @@
 package org.csu.sdolp.cli;
 
+import lombok.Getter;
+import lombok.Setter;
+
 /**
  * 代表一个客户端会话，存储连接状态信息。
  */
 public class Session {
+    @Getter
     private final String username;
+    @Getter
     private final int connectionId;
     private boolean isAuthenticated = false;
+    // <-- 新增
+    // <-- 新增
+    @Setter
+    @Getter
+    private String currentDatabase;
 
     public Session(int connectionId) {
         this.connectionId = connectionId;
@@ -26,15 +36,8 @@ public class Session {
         return new Session(connectionId, username);
     }
 
-    public String getUsername() {
-        return username;
-    }
-
     public boolean isAuthenticated() {
         return isAuthenticated;
     }
 
-    public int getConnectionId() {
-        return connectionId;
-    }
 }

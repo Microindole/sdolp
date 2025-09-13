@@ -59,7 +59,9 @@ public class Parser {
                 consume(TokenType.CREATE, "'CREATE' keyword");
                 return parseCreateUserStatement();
             }
-
+            if (match(TokenType.USE)) {
+                return parseUseDatabaseStatement();
+            }
             throw new ParseException(nextToken, "Expected 'TABLE', 'DATABASE', or 'INDEX' after 'CREATE'");
         }
         if (match(TokenType.GRANT)) {
@@ -91,6 +93,11 @@ public class Parser {
         }
 
         throw new ParseException(peek(), "a valid statement (CREATE, SELECT, INSERT, DELETE, DROP, etc.)");
+    }
+
+    private StatementNode parseUseDatabaseStatement() {
+        IdentifierNode dbName = new IdentifierNode(consume(TokenType.IDENTIFIER, "database name").lexeme());
+        return new UseDatabaseStatementNode(dbName);
     }
 
     private StatementNode parseDropDatabaseStatement() {
@@ -208,6 +215,9 @@ public class Parser {
         Token dataTypeToken = peek();
         if (dataTypeToken.type() == TokenType.INT ||
                 dataTypeToken.type() == TokenType.VARCHAR ||
+                dataTypeToken.type() == TokenType.DECIMAL ||
+                dataTypeToken.type() == TokenType.DATE ||
+                dataTypeToken.type() == TokenType.BOOLEAN ||
                 dataTypeToken.type() == TokenType.IDENTIFIER) {
             advance();
         } else {
@@ -381,6 +391,15 @@ public class Parser {
     }
 
     private ExpressionNode parsePrimaryExpression() {
+        if (match(TokenType.INTEGER_CONST, TokenType.DECIMAL_CONST, TokenType.STRING_CONST, TokenType.TRUE, TokenType.FALSE)) {
+            return new LiteralNode(previous());
+        }
+        if (match(TokenType.INTEGER_CONST, TokenType.STRING_CONST, TokenType.TRUE, TokenType.FALSE)) {
+            return new LiteralNode(previous());
+        }
+        if (AGGREGATE_FUNCTIONS.contains(peek().type())) {
+            return parseAggregateExpression();
+        }
         if (match(TokenType.INTEGER_CONST, TokenType.STRING_CONST)) {
             return new LiteralNode(previous());
         }

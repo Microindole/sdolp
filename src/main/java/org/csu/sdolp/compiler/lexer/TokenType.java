@@ -19,11 +19,17 @@ public enum TokenType {
     INSERT,     // "INSERT"
     INTO,       // "INTO"
     VALUES,     // "VALUES"
+    USE,        // "USE"
     DELETE,     // "DELETE"
     UPDATE,     // "UPDATE"
     SET,        // "SET"
     INT,        // "INT" 数据类型
     VARCHAR,    // "VARCHAR" 数据类型
+    DECIMAL,
+    DATE,
+    BOOLEAN,
+    TRUE,
+    FALSE,
 
     // ====== 权限管理关键字 ======
     USER,       // "USER"
@@ -63,6 +69,7 @@ public enum TokenType {
 
     // ---- 常量 (Constants) ----
     INTEGER_CONST,    // 整数常量, e.g., 123
+    DECIMAL_CONST,    // 小数常量, e.g., 123.45
     STRING_CONST,     // 字符串常量, e.g., 'hello'
 
     // ---- 运算符 (Operators) ----
