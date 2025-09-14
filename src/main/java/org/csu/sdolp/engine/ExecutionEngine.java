@@ -80,7 +80,15 @@ public class ExecutionEngine {
         if (plan instanceof UpdatePlanNode updatePlan) {
             TupleIterator childPlan = buildExecutorTree(updatePlan.getChild(), txn);
             TableHeap tableHeap = new TableHeap(bufferPoolManager, updatePlan.getTableInfo(), logManager, lockManager);
-            return new UpdateExecutor(childPlan, tableHeap, updatePlan.getTableInfo().getSchema(), updatePlan.getSetClauses(), txn);
+            return new UpdateExecutor(
+                    childPlan,
+                    tableHeap,
+                    updatePlan.getTableInfo().getSchema(),
+                    updatePlan.getSetClauses(),
+                    txn,
+                    catalog,
+                    bufferPoolManager
+            );
         }
 
         // --- Query Clause Executors ---
@@ -131,7 +139,7 @@ public class ExecutionEngine {
         }
         // --- DDL Executors ---
         if (plan instanceof CreateTablePlanNode createTablePlan) {
-            return new CreateTableExecutor(createTablePlan, catalog, txn, logManager);
+            return new CreateTableExecutor(createTablePlan, catalog, txn, logManager, bufferPoolManager, lockManager);
         }
         if (plan instanceof DropTablePlanNode dropPlan) {
             return new DropTableExecutor(dropPlan, catalog, txn, logManager);

@@ -39,15 +39,32 @@ public class InsertExecutor implements TupleIterator {
             return null;
         }
 
+        String primaryKeyColumnName = plan.getTableInfo().getSchema().getPrimaryKeyColumnName();
         int insertCount = 0;
-        // 确保使用正确的方法名，例如 getRawTuples()
+
         for (Tuple tuple : plan.getRawTuples()) {
+            // 核心修复点：检查主键唯一性
+            if (primaryKeyColumnName != null) {
+                int pkIndex = plan.getTableInfo().getSchema().getColumnIndex(primaryKeyColumnName);
+                Value pkValue = tuple.getValues().get(pkIndex);
+
+                // 1. 获取主键索引信息
+                IndexInfo pkIndexInfo = catalog.getIndex(plan.getTableInfo().getTableName(), primaryKeyColumnName);
+
+                // 2. 如果主键索引存在，则执行查找
+                if (pkIndexInfo != null) {
+                    BPlusTree pkTree = new BPlusTree(bufferPoolManager, pkIndexInfo.getRootPageId());
+                    if (pkTree.search(pkValue) != null) {
+                        throw new RuntimeException("Primary key constraint violation: Duplicate key '" + pkValue + "'");
+                    }
+                }
+            }
             if (tableHeap.insertTuple(tuple, txn)) {
-                // 核心逻辑：插入成功后，更新所有相关索引
                 updateAllIndexesForInsert(tuple);
                 insertCount++;
             }
         }
+
         done = true;
         return new Tuple(Collections.singletonList(new Value(insertCount)));
     }

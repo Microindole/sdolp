@@ -8,6 +8,7 @@ import java.util.List;
  */
 public record CreateTableStatementNode(
         IdentifierNode tableName,
-        List<ColumnDefinitionNode> columns
+        List<ColumnDefinitionNode> columns,
+        IdentifierNode primaryKeyColumn
 ) implements StatementNode {
 }

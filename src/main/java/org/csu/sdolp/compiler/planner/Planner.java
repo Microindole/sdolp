@@ -94,7 +94,7 @@ public class Planner {
                         colDef.columnName().getName(),
                         DataType.valueOf(colDef.dataType().getName().toUpperCase())))
                 .collect(Collectors.toList());
-        Schema schema = new Schema(columns);
+        Schema schema = new Schema(columns, ast.primaryKeyColumn() != null ? ast.primaryKeyColumn().getName() : null);
         return new CreateTablePlanNode(tableName, schema);
     }
 

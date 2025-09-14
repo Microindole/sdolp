@@ -1,8 +1,12 @@
 package org.csu.sdolp.executor;
 
+import org.csu.sdolp.catalog.Catalog;
+import org.csu.sdolp.catalog.IndexInfo;
 import org.csu.sdolp.common.model.*;
 import org.csu.sdolp.compiler.parser.ast.LiteralNode;
 import org.csu.sdolp.compiler.parser.ast.SetClauseNode;
+import org.csu.sdolp.storage.buffer.BufferPoolManager;
+import org.csu.sdolp.storage.index.BPlusTree;
 import org.csu.sdolp.storage.page.PageId;
 import org.csu.sdolp.transaction.LockManager;
 import org.csu.sdolp.transaction.Transaction;
@@ -18,36 +22,26 @@ public class UpdateExecutor implements TupleIterator {
     private final Schema schema;
     private final List<SetClauseNode> setClauses;
     private final Transaction txn;
+    private final Catalog catalog;
+    private final BufferPoolManager bufferPoolManager;
     private boolean done = false;
 
-    private final LockManager lockManager;
-    private final PageId firstPageId;
     private static final Schema AFFECTED_ROWS_SCHEMA = new Schema(List.of(new Column("updated_rows", DataType.INT)));
 
-    // *** 修改点：构造函数增加Transaction参数 ***
-    public UpdateExecutor(TupleIterator child, TableHeap tableHeap, Schema schema, List<SetClauseNode> setClauses, Transaction txn) {
+    public UpdateExecutor(TupleIterator child, TableHeap tableHeap, Schema schema, List<SetClauseNode> setClauses, Transaction txn, Catalog catalog, BufferPoolManager bufferPoolManager) {
         this.child = child;
         this.tableHeap = tableHeap;
         this.schema = schema;
         this.setClauses = setClauses;
         this.txn = txn;
-        this.lockManager = tableHeap.getLockManager();
-        this.firstPageId = tableHeap.getFirstPageId();
+        this.catalog = catalog;
+        this.bufferPoolManager = bufferPoolManager;
     }
 
     @Override
     public Tuple next() throws IOException {
         if (done) {
             return null;
-        }
-        try {
-            if (firstPageId != null && firstPageId.getPageNum() != -1) {
-                System.out.println("[DEBUG] UpdateExecutor acquiring X-lock on table (page " + firstPageId.getPageNum() + ") before scanning.");
-                lockManager.lockExclusive(txn, firstPageId);
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Thread interrupted while acquiring table lock for UPDATE.", e);
         }
 
         List<Tuple> tuplesToUpdate = new ArrayList<>();
@@ -65,13 +59,57 @@ public class UpdateExecutor implements TupleIterator {
             }
             Tuple newTuple = new Tuple(newValues);
 
-            // *** 修改点：调用updateTuple时传入Transaction ***
-            if (tableHeap.updateTuple(newTuple, oldTuple.getRid(), txn, false)) {
+            // 2. 检查主键约束（如果被更新）
+            String pkColumnName = schema.getPrimaryKeyColumnName();
+            if (pkColumnName != null) {
+                int pkIndex = schema.getColumnIndex(pkColumnName);
+                Value oldPkValue = oldTuple.getValues().get(pkIndex);
+                Value newPkValue = newTuple.getValues().get(pkIndex);
+
+                // 如果主键值被修改，并且新值已存在，则抛出异常
+                if (!oldPkValue.equals(newPkValue)) {
+                    IndexInfo pkIndexInfo = catalog.getIndex(tableHeap.getTableInfo().getTableName(), pkColumnName);
+                    if (pkIndexInfo != null) {
+                        BPlusTree pkTree = new BPlusTree(bufferPoolManager, pkIndexInfo.getRootPageId());
+                        if (pkTree.search(newPkValue) != null) {
+                            throw new RuntimeException("Primary key constraint violation: Cannot update to existing key '" + newPkValue + "'");
+                        }
+                    }
+                }
+            }
+
+            // 3. 执行物理更新，并返回新元组的RID
+            // 修复点：修改 updateTuple 的返回值以匹配 TableHeap 的新接口
+            RID newRid = tableHeap.updateTuple(newTuple, oldTuple.getRid(), txn);
+            if (newRid != null) {
+                updateAllIndexesForUpdate(oldTuple, newTuple, newRid);
                 updatedCount++;
             }
         }
         done = true;
         return new Tuple(Collections.singletonList(new Value(updatedCount)));
+    }
+
+    /**
+     * 新增辅助方法：更新所有索引。
+     */
+    private void updateAllIndexesForUpdate(Tuple oldTuple, Tuple newTuple, RID newRid) throws IOException {
+        String tableName = tableHeap.getTableInfo().getTableName();
+        List<IndexInfo> indexes = catalog.getIndexesForTable(tableName);
+
+        for (IndexInfo indexInfo : indexes) {
+            BPlusTree index = new BPlusTree(bufferPoolManager, indexInfo.getRootPageId());
+            int keyColumnIndex = schema.getColumnIndex(indexInfo.getColumnName());
+
+            Value oldKey = oldTuple.getValues().get(keyColumnIndex);
+            Value newKey = newTuple.getValues().get(keyColumnIndex);
+
+            // 如果索引键值发生变化，则更新索引
+            if (!oldKey.equals(newKey)) {
+                index.delete(oldKey);
+                index.insert(newKey, newRid);
+            }
+        }
     }
 
     @Override

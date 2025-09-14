@@ -21,6 +21,7 @@ import org.csu.sdolp.transaction.Transaction;
 import org.csu.sdolp.transaction.TransactionManager;
 import org.csu.sdolp.transaction.log.LogManager;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -43,10 +44,12 @@ public class QueryProcessor {
     private LockManager lockManager;
     @Getter
     private TransactionManager transactionManager;
-    @Getter // <-- 新增 Getter
+    @Getter
     private final DatabaseManager dbManager;
+    private final String dbName;
 
     public QueryProcessor(String dbName) {
+        this.dbName = dbName;
         try {
             this.dbManager = new DatabaseManager();
             this.diskManager = new DiskManager(DatabaseManager.getDbFilePath(dbName));
@@ -78,6 +81,7 @@ public class QueryProcessor {
         logManager.flush();
         diskManager.close();
         logManager.close();
+        new File(DatabaseManager.getDbFilePath(this.dbName) + ".log").delete();
     }
 
     public String executeAndGetResult(String sql, Session session) {

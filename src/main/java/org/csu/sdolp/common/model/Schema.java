@@ -1,5 +1,7 @@
 package org.csu.sdolp.common.model;
 
+import lombok.Getter;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -10,15 +12,17 @@ import java.util.stream.Collectors;
 /**
  * 定义表的模式，包含列的定义。
  */
+@Getter
 public class Schema {
     private final List<Column> columns;
+    private String primaryKeyColumnName;
 
     public Schema(List<Column> columns) {
         this.columns = columns;
     }
-
-    public List<Column> getColumns() {
-        return columns;
+    public Schema(List<Column> columns, String primaryKeyColumnName) {
+        this(columns);
+        this.primaryKeyColumnName = primaryKeyColumnName;
     }
 
     public int getTupleLength() {

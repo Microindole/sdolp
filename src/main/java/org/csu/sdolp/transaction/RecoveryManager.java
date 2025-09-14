@@ -153,9 +153,12 @@ public class RecoveryManager {
                         tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
                     }
                 } else if (log.getLogType() == LogRecord.LogType.UPDATE) {
+
                     Tuple oldTuple = Tuple.fromBytes(log.getOldTupleBytes(), schema);
                     Tuple newTuple = Tuple.fromBytes(log.getNewTupleBytes(), schema);
                     Tuple tupleToApply = isUndo ? oldTuple : newTuple;
+
+                    // 核心修复点：调用 updateTuple，忽略返回值
                     tableHeap.updateTuple(tupleToApply, log.getRid(), fakeTxn, false);
                 }
                 break;

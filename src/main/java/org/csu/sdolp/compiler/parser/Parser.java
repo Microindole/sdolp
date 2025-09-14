@@ -192,15 +192,24 @@ public class Parser {
         consume(TokenType.LPAREN, "'(' after table name");
 
         List<ColumnDefinitionNode> columns = new ArrayList<>();
+        IdentifierNode primaryKeyColumn = null; // 存储主键列
         if (!check(TokenType.RPAREN)) {
             do {
-                columns.add(parseColumnDefinition());
+                ColumnDefinitionNode colDef = parseColumnDefinition();
+                columns.add(colDef);
+                // 检查是否有 PRIMARY KEY 约束
+                if (match(TokenType.PRIMARY) && match(TokenType.KEY)) {
+                    if (primaryKeyColumn != null) {
+                        throw new ParseException(peek(), "Only one primary key is allowed per table.");
+                    }
+                    primaryKeyColumn = colDef.columnName();
+                }
             } while (match(TokenType.COMMA));
         }
 
         consume(TokenType.RPAREN, "')' after column definitions");
 
-        return new CreateTableStatementNode(tableName, columns);
+        return new CreateTableStatementNode(tableName, columns, primaryKeyColumn);
     }
 
     private CreateIndexStatementNode parseCreateIndexStatement() {

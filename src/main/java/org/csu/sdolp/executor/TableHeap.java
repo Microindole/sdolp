@@ -25,6 +25,7 @@ public class TableHeap implements TupleIterator {
     private final LogManager logManager;
     @Getter
     private final LockManager lockManager;
+    @Getter
     private final TableInfo tableInfo;
 
     // --- 迭代器状态 ---
@@ -212,19 +213,19 @@ public class TableHeap implements TupleIterator {
 
 
     // **给普通执行器（如UpdateExecutor）调用的公开方法**
-    public boolean updateTuple(Tuple newTuple, RID rid, Transaction txn) throws IOException {
+    public RID updateTuple(Tuple newTuple, RID rid, Transaction txn) throws IOException {
         // 正常操作总是需要加锁和写日志
         return updateTuple(newTuple, rid, txn, true, true);
     }
 
     // **给恢复管理器(RecoveryManager)调用的内部版本**
-    public boolean updateTuple(Tuple newTuple, RID rid, Transaction txn, boolean acquireLock) throws IOException {
+    public RID updateTuple(Tuple newTuple, RID rid, Transaction txn, boolean acquireLock) throws IOException {
         // 恢复操作由RecoveryManager控制，不写新的DML日志
         return updateTuple(newTuple, rid, txn, acquireLock, false);
     }
 
     // **包含所有逻辑的私有核心方法**
-    private boolean updateTuple(Tuple newTuple, RID rid, Transaction txn, boolean acquireLock, boolean writeLog) throws IOException {
+    private RID updateTuple(Tuple newTuple, RID rid, Transaction txn, boolean acquireLock, boolean writeLog) throws IOException {
         try {
             PageId pageId = new PageId(rid.pageNum());
             if (acquireLock) {
@@ -232,7 +233,10 @@ public class TableHeap implements TupleIterator {
             }
             Page page = bufferPoolManager.getPage(pageId);
             Tuple oldTuple = page.getTuple(rid.slotIndex(), schema);
-            if (oldTuple == null) return false;
+            // 如果旧元组不存在或已被标记为删除，则无法更新
+            if (oldTuple == null) {
+                return null;
+            }
 
             if (writeLog) {
                 LogRecord logRecord = new LogRecord(txn.getTransactionId(), txn.getPrevLSN(), LogRecord.LogType.UPDATE, this.tableInfo.getTableName(), rid, oldTuple, newTuple);
@@ -240,22 +244,22 @@ public class TableHeap implements TupleIterator {
                 txn.setPrevLSN(lsn);
             }
 
-            if (page.deleteTuple(rid.slotIndex())) { // 调用物理删除方法
-                // 更新是先删除再插入
-                int newSlotIndex = page.getNumTuples();
-                if(page.insertTuple(newTuple)){
-                    newTuple.setRid(new RID(pageId.getPageNum(), newSlotIndex));
-                    bufferPoolManager.flushPage(page.getPageId());
-                    return true;
-                }
+            boolean markSuccess = page.markTupleAsDeleted(rid.slotIndex());
 
-                // 如果插入失败，这里无法“撤销删除”
-                System.err.println("Update failed: Not enough space on page after physical delete.");
-                // 在这种情况下，旧数据已被删除，需要一个更复杂的恢复机制。
-                // 对于当前简化模型，我们可以返回失败。
-                return false;
+            if (markSuccess) {
+                // 2插入新版本的元组。
+                if (insertTuple(newTuple, txn, false, false)) {
+                    bufferPoolManager.flushPage(page.getPageId());
+                    return newTuple.getRid();
+                } else {
+                    page.undoMarkTupleAsDeleted(rid.slotIndex());
+                    // 刷新页面以确保持久化撤销操作
+                    bufferPoolManager.flushPage(page.getPageId());
+                    // 向上层报告更新失败
+                    return null;
+                }
             }
-            return false;
+            return null; // 标记删除失败
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Thread interrupted while acquiring lock", e);

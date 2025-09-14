@@ -120,6 +120,14 @@ public class SemanticAnalyzer {
         if (catalog.getTable(tableName) != null) {
             throw new SemanticException("Table '" + tableName + "' already exists.");
         }
+        if (node.primaryKeyColumn() != null) {
+            String pkColumnName = node.primaryKeyColumn().getName();
+            boolean pkExists = node.columns().stream()
+                    .anyMatch(colDef -> colDef.columnName().getName().equalsIgnoreCase(pkColumnName));
+            if (!pkExists) {
+                throw new SemanticException("Primary key column '" + pkColumnName + "' not found in column list.");
+            }
+        }
         // 检查数据类型是否合法
         for (ColumnDefinitionNode colDef : node.columns()) {
             try {
