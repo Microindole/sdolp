@@ -6,6 +6,8 @@ import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.executor.TableHeap;
 import org.csu.sdolp.storage.buffer.BufferPoolManager;
+import org.csu.sdolp.storage.page.Page;
+import org.csu.sdolp.storage.page.PageId;
 import org.csu.sdolp.transaction.log.LogManager;
 import org.csu.sdolp.transaction.log.LogRecord;
 
@@ -128,38 +130,39 @@ public class RecoveryManager {
                 } return;
             // 类型 3: DML 日志，现在可以安全地假设 log.getTableName() 不为 null
             case INSERT, DELETE, UPDATE:
-                TableInfo tableInfo = catalog.getTable(log.getTableName());
-                if (tableInfo == null) {
+                TableInfo tableInfoForUpdate  = catalog.getTable(log.getTableName());
+                if (tableInfoForUpdate == null) {
                     System.err.println("WARN: Table '" + log.getTableName() + "' not found for DML op during recovery, skipping LSN=" + log.getLsn());
                     return;
                 }
-                Schema schema = tableInfo.getSchema();
-                TableHeap tableHeap = new TableHeap(bufferPoolManager, tableInfo, logManager, lockManager);
+                Schema schemaForUpdate = tableInfoForUpdate.getSchema();
+                TableHeap tableHeapForUpdate = new TableHeap(bufferPoolManager, tableInfoForUpdate, logManager, lockManager);
+                Transaction fakeTxnForUpdate = new Transaction(log.getTransactionId());
 
-                // 接下来是处理不同 DML 类型的逻辑
-                if (log.getLogType() == LogRecord.LogType.INSERT) {
-                    if (isUndo) {
-                        tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
-                    } else {
-                        Tuple tuple = Tuple.fromBytes(log.getTupleBytes(), schema);
-                        tableHeap.insertTuple(tuple, fakeTxn, false, false);
+                if (isUndo) {
+                    Tuple oldTuple = Tuple.fromBytes(log.getOldTupleBytes(), schemaForUpdate);
+                    tableHeapForUpdate.updateTuple(oldTuple, log.getRid(), fakeTxnForUpdate, false);
+
+                } else {
+                    PageId oldPageId = new PageId(log.getRid().pageNum());
+                    Page oldPage = bufferPoolManager.getPage(oldPageId);
+                    oldPage.markTupleAsDeleted(log.getRid().slotIndex());
+                    Tuple newTuple = Tuple.fromBytes(log.getNewTupleBytes(), schemaForUpdate);
+                    boolean alreadyExists = false;
+                    tableHeapForUpdate.initIterator(fakeTxnForUpdate);
+                    while (tableHeapForUpdate.hasNext()) {
+                        Tuple currentTuple = tableHeapForUpdate.next();
+                        // 比较元组内容是否完全相同
+                        if (currentTuple.getValues().equals(newTuple.getValues())) {
+                            alreadyExists = true;
+                            break;
+                        }
                     }
-                } else if (log.getLogType() == LogRecord.LogType.DELETE) {
-                    if (isUndo) {
-                        Tuple deletedTuple = Tuple.fromBytes(log.getTupleBytes(), schema);
-                        deletedTuple.setRid(log.getRid());
-                        tableHeap.insertTuple(deletedTuple, fakeTxn, false, false);
-                    } else {
-                        tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
+
+                    // 3. 只有当新元组不存在时，才执行插入。
+                    if (!alreadyExists) {
+                        tableHeapForUpdate.insertTuple(newTuple, fakeTxnForUpdate, false, false);
                     }
-                } else if (log.getLogType() == LogRecord.LogType.UPDATE) {
-
-                    Tuple oldTuple = Tuple.fromBytes(log.getOldTupleBytes(), schema);
-                    Tuple newTuple = Tuple.fromBytes(log.getNewTupleBytes(), schema);
-                    Tuple tupleToApply = isUndo ? oldTuple : newTuple;
-
-                    // 核心修复点：调用 updateTuple，忽略返回值
-                    tableHeap.updateTuple(tupleToApply, log.getRid(), fakeTxn, false);
                 }
                 break;
         }

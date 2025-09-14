@@ -59,14 +59,11 @@ public class UpdateExecutor implements TupleIterator {
             }
             Tuple newTuple = new Tuple(newValues);
 
-            // 2. 检查主键约束（如果被更新）
             String pkColumnName = schema.getPrimaryKeyColumnName();
             if (pkColumnName != null) {
                 int pkIndex = schema.getColumnIndex(pkColumnName);
                 Value oldPkValue = oldTuple.getValues().get(pkIndex);
                 Value newPkValue = newTuple.getValues().get(pkIndex);
-
-                // 如果主键值被修改，并且新值已存在，则抛出异常
                 if (!oldPkValue.equals(newPkValue)) {
                     IndexInfo pkIndexInfo = catalog.getIndex(tableHeap.getTableInfo().getTableName(), pkColumnName);
                     if (pkIndexInfo != null) {
@@ -78,8 +75,6 @@ public class UpdateExecutor implements TupleIterator {
                 }
             }
 
-            // 3. 执行物理更新，并返回新元组的RID
-            // 修复点：修改 updateTuple 的返回值以匹配 TableHeap 的新接口
             RID newRid = tableHeap.updateTuple(newTuple, oldTuple.getRid(), txn);
             if (newRid != null) {
                 updateAllIndexesForUpdate(oldTuple, newTuple, newRid);
