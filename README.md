@@ -185,7 +185,7 @@ src/main/java/org/csu/sdolp/
 
 ## ❓ 提问与交流
 
-如果你对项目有任何疑问、建议，或者发现了 Bug，欢迎随时通过 **[GitHub Issues](https://gitee.com/cxzhang0508/sdolp/issues)** 与我交流。
+如果你对项目有任何疑问、建议，或者发现了 Bug，欢迎随时通过 **[GitHub Issues](https://github.com/Microindole/issues)** 与我交流。
 
 我会尽我所能回答你的问题！作者有时间也会在这里更新的 ( ´ ▽ ` )ﾉ
 
@@ -207,14 +207,14 @@ src/main/java/org/csu/sdolp/
 
 这对我来说是莫大的鼓励，也是我继续维护和改进这个项目的动力。谢谢！
 
-[![Gitee Stars](https://gitee.com/cxzhang0508/sdolp/badge/star.svg?theme=dark)](https://gitee.com/cxzhang0508/sdolp/stargazers)
-[![Gitee Forks](https://gitee.com/cxzhang0508/sdolp/badge/fork.svg?theme=dark)](https://gitee.com/cxzhang0508/sdolp/members)
+[![Gitee Stars](https://github.com/Microindole/badge/star.svg?theme=dark)](https://github.com/Microindole/stargazers)
+[![Gitee Forks](https://github.com/Microindole/badge/fork.svg?theme=dark)](https://github.com/Microindole/members)
 
 ### 📈 项目统计
 
 <div align="center">
 
-![Gitee Stats](https://gitee.com/cxzhang0508/sdolp/widgets/widget_card.svg?colors=4183c4,ffffff,ffffff,e3e9ed,666666,9b9b9b)
+![Gitee Stats](https://github.com/Microindole/widgets/widget_card.svg?colors=4183c4,ffffff,ffffff,e3e9ed,666666,9b9b9b)
 
 </div>
 
@@ -227,3 +227,4 @@ src/main/java/org/csu/sdolp/
 本项目采用 MIT 许可证。详情请见 [LICENSE](LICENSE) 文件。
 
 Copyright (c) 2025 The sdolp Project Authors
+
