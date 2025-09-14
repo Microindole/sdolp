@@ -12,7 +12,6 @@ import org.csu.sdolp.transaction.log.LogManager;
 import org.csu.sdolp.transaction.log.LogRecord;
 
 import java.io.IOException;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -128,40 +127,132 @@ public class RecoveryManager {
                 if (!isUndo) {
                     catalog.addColumn(log.getTableName(), log.getNewColumn());
                 } return;
-            // 类型 3: DML 日志，现在可以安全地假设 log.getTableName() 不为 null
+            // 类型 3: DML 日志
+//            case INSERT, DELETE, UPDATE:
+//                TableInfo tableInfo = catalog.getTable(log.getTableName());
+//                if (tableInfo == null) {
+//                    System.err.println("WARN: Table '" + log.getTableName() + "' not found, skipping LSN=" + log.getLsn());
+//                    return;
+//                }
+//                Schema schema = tableInfo.getSchema();
+//                TableHeap tableHeap = new TableHeap(bufferPoolManager, tableInfo, logManager, lockManager);
+//
+//                if (log.getLogType() == LogRecord.LogType.INSERT) {
+//                    Tuple tupleToInsert = Tuple.fromBytes(log.getTupleBytes(), schema);
+//                    tupleToInsert.setRid(log.getRid()); // 必须从日志中恢复RID
+//                    if (isUndo) {
+//                        // Undo an insert is a simple delete.
+//                        tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
+//                    } else { // REDO
+//                        // IDEMPOTENCY FIX: Only insert if the tuple does NOT already exist at that RID.
+//                        Tuple existingTuple = tableHeap.getTuple(log.getRid(), fakeTxn);
+//                        if (existingTuple == null) {
+//                            tableHeap.insertTuple(tupleToInsert, fakeTxn, false, false);
+//                        }
+//                    }
+//                } else if (log.getLogType() == LogRecord.LogType.DELETE) {
+//                    Tuple deletedTuple = Tuple.fromBytes(log.getTupleBytes(), schema);
+//                    deletedTuple.setRid(log.getRid());
+//                    if (isUndo) {
+//                        // IDEMPOTENCY FIX: Check before re-inserting.
+//                        Tuple existingTuple = tableHeap.getTuple(log.getRid(), fakeTxn);
+//                        if (existingTuple == null) {
+//                            tableHeap.insertTuple(deletedTuple, fakeTxn, false, false);
+//                        }
+//                    } else { // REDO
+//                        // Deleting something that doesn't exist is already idempotent.
+//                        tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
+//                    }
+//                } else if (log.getLogType() == LogRecord.LogType.UPDATE) {
+//                    Tuple oldTuple = Tuple.fromBytes(log.getOldTupleBytes(), schema);
+//                    Tuple newTuple = Tuple.fromBytes(log.getNewTupleBytes(), schema);
+//                    oldTuple.setRid(log.getRid());
+//                    if (isUndo) {
+//                        tableHeap.updateTuple(oldTuple, log.getRid(), fakeTxn, false);
+//                    } else { // REDO
+//                        // 步骤 1: 确保旧的元组槽位被标记为删除（或已不存在）。
+//                        tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
+//                        // 步骤 2: 检查新的元组是否已经存在于表中（由之前的刷盘导致）。
+//                        boolean newTupleExists = false;
+//                        tableHeap.initIterator(fakeTxn);
+//                        while(tableHeap.hasNext()) {
+//                            Tuple currentTuple = tableHeap.next();
+//                            if (currentTuple != null && currentTuple.getValues().equals(newTuple.getValues())) {
+//                                newTupleExists = true;
+//                                break;
+//                            }
+//                        }
+//                        // 步骤 3: 仅在确认新元组不存在时，才执行插入。
+//                        if (!newTupleExists) {
+//                            tableHeap.insertTuple(newTuple, fakeTxn, false, false);
+//                        }
+//                    }
+//                }
+//                break;
             case INSERT, DELETE, UPDATE:
-                TableInfo tableInfoForUpdate  = catalog.getTable(log.getTableName());
-                if (tableInfoForUpdate == null) {
-                    System.err.println("WARN: Table '" + log.getTableName() + "' not found for DML op during recovery, skipping LSN=" + log.getLsn());
+                TableInfo tableInfo = catalog.getTable(log.getTableName());
+                if (tableInfo == null) {
+                    System.err.println("WARN: Table '" + log.getTableName() + "' not found, skipping LSN=" + log.getLsn());
                     return;
                 }
-                Schema schemaForUpdate = tableInfoForUpdate.getSchema();
-                TableHeap tableHeapForUpdate = new TableHeap(bufferPoolManager, tableInfoForUpdate, logManager, lockManager);
-                Transaction fakeTxnForUpdate = new Transaction(log.getTransactionId());
+                Schema schema = tableInfo.getSchema();
+                TableHeap tableHeap = new TableHeap(bufferPoolManager, tableInfo, logManager, lockManager);
 
-                if (isUndo) {
-                    Tuple oldTuple = Tuple.fromBytes(log.getOldTupleBytes(), schemaForUpdate);
-                    tableHeapForUpdate.updateTuple(oldTuple, log.getRid(), fakeTxnForUpdate, false);
+                if (log.getLogType() == LogRecord.LogType.INSERT) {
+                    Tuple tupleToInsert = Tuple.fromBytes(log.getTupleBytes(), schema);
+                    tupleToInsert.setRid(log.getRid());
 
-                } else {
-                    PageId oldPageId = new PageId(log.getRid().pageNum());
-                    Page oldPage = bufferPoolManager.getPage(oldPageId);
-                    oldPage.markTupleAsDeleted(log.getRid().slotIndex());
-                    Tuple newTuple = Tuple.fromBytes(log.getNewTupleBytes(), schemaForUpdate);
-                    boolean alreadyExists = false;
-                    tableHeapForUpdate.initIterator(fakeTxnForUpdate);
-                    while (tableHeapForUpdate.hasNext()) {
-                        Tuple currentTuple = tableHeapForUpdate.next();
-                        // 比较元组内容是否完全相同
-                        if (currentTuple.getValues().equals(newTuple.getValues())) {
-                            alreadyExists = true;
-                            break;
+                    if (isUndo) {
+                        tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
+                    } else {
+                        PageId pageId = new PageId(log.getRid().pageNum());
+                        Page page = bufferPoolManager.getPage(pageId);
+                        if (log.getRid().slotIndex() >= page.getNumTuples()) {
+                            tableHeap.insertTuple(tupleToInsert, fakeTxn, false, false);
                         }
                     }
 
-                    // 3. 只有当新元组不存在时，才执行插入。
-                    if (!alreadyExists) {
-                        tableHeapForUpdate.insertTuple(newTuple, fakeTxnForUpdate, false, false);
+                } else if (log.getLogType() == LogRecord.LogType.DELETE) {
+                    if (isUndo) {
+                        Tuple tupleToRestore = Tuple.fromBytes(log.getTupleBytes(), schema);
+                        tupleToRestore.setRid(log.getRid());
+                        Tuple existingTuple = tableHeap.getTuple(log.getRid(), fakeTxn);
+                        if (existingTuple == null) {
+                            tableHeap.insertTuple(tupleToRestore, fakeTxn, false, false);
+                        }
+                    } else { // REDO
+                        // Deleting something that is already deleted is fine. This is already idempotent.
+                        tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
+                    }
+
+                } else if (log.getLogType() == LogRecord.LogType.UPDATE) {
+                    Tuple oldTuple = Tuple.fromBytes(log.getOldTupleBytes(), schema);
+                    Tuple newTuple = Tuple.fromBytes(log.getNewTupleBytes(), schema);
+                    oldTuple.setRid(log.getRid());
+
+                    if (isUndo) {
+                        // Undo an update by applying the old tuple version.
+                        tableHeap.updateTuple(oldTuple, log.getRid(), fakeTxn, false);
+                    } else { // REDO
+                        PageId pageId = new PageId(log.getRid().pageNum());
+                        Page page = bufferPoolManager.getPage(pageId);
+
+                        page.markTupleAsDeleted(log.getRid().slotIndex());
+                        bufferPoolManager.flushPage(pageId);
+
+                        boolean newTupleExists = false;
+                        tableHeap.initIterator(fakeTxn);
+                        while(tableHeap.hasNext()) {
+                            Tuple currentTuple = tableHeap.next();
+                            if (currentTuple != null && currentTuple.getValues().equals(newTuple.getValues())) {
+                                newTupleExists = true;
+                                break;
+                            }
+                        }
+
+                        if (!newTupleExists) {
+                            tableHeap.insertTuple(newTuple, fakeTxn, false, false);
+                        }
                     }
                 }
                 break;

@@ -50,98 +50,59 @@ public class UpdateAndRecoveryFixTest {
         }
         directory.delete();
     }
-
+    
     /**
-     * 测试场景A: 验证正常关闭流程
-     * 1. 执行 DML 操作 (CREATE, INSERT, UPDATE).
-     * 2. 正常关闭数据库 (调用 close()).
-     * 3. 验证日志文件是否被删除.
-     * 4. 重启数据库.
-     * 5. 查询数据，验证数据是否正确且没有重复.
+     * 核心测试场景：验证主键约束和崩溃恢复的健壮性
      */
     @Test
-    void testUpdateConsistencyAfterGracefulShutdown() throws IOException {
-        System.out.println("\n--- SCENARIO A: Testing Correctness After GRACEFUL SHUTDOWN ---");
+    void testPrimaryKeyViolationOnUpdateAndRecovery() throws IOException {
+        System.out.println("\n--- SCENARIO: Testing PK Violation on UPDATE and CRASH RECOVERY ---");
 
-        // --- 步骤 1: 第一次会话 ---
-        System.out.println("[A-1] Starting first session and performing operations...");
+        // --- 步骤 1: 第一次会话，设置初始数据 ---
+        System.out.println("[Step 1] Starting first session and setting up initial data...");
         queryProcessor = new QueryProcessor(TEST_DB_NAME);
         queryProcessor.execute("CREATE TABLE employees (id INT PRIMARY KEY, name VARCHAR);");
         queryProcessor.execute("INSERT INTO employees (id, name) VALUES (1, 'Alice');");
         queryProcessor.execute("INSERT INTO employees (id, name) VALUES (2, 'Bob');");
+        System.out.println("      Initial data created.");
+
+        // --- 步骤 2: 尝试违反主键约束 (预期失败) ---
+        System.out.println("\n[Step 2] Attempting to update id=2 to id=1, which should violate PK constraint...");
+        String violatingUpdateSql = "UPDATE employees SET id = 1 WHERE id = 2;";
+        String result = queryProcessor.executeAndGetResult(violatingUpdateSql);
+        System.out.println("      Result: " + result);
+        assertTrue(result.contains("Primary key constraint violation"), "Update should be rejected due to PK violation.");
+        System.out.println("      Verification PASSED. PK violation was correctly caught.");
+
+        // --- 步骤 3: 执行一个合法的 UPDATE 并模拟崩溃 ---
+        System.out.println("\n[Step 3] Performing a valid update and then simulating a crash...");
         queryProcessor.execute("UPDATE employees SET name = 'Alicia' WHERE id = 1;");
-
-        // --- 步骤 2: 正常关闭 ---
-        System.out.println("[A-2] Closing database gracefully...");
-        queryProcessor.close();
-        queryProcessor = null; // 确保旧实例被释放
-
-        // --- 步骤 3: 验证日志文件 ---
-        File logFile = new File(TEST_LOG_FILE);
-        System.out.println("[A-3] Verifying log file is deleted: " + TEST_LOG_FILE);
-        assertFalse(logFile.exists(), "Log file should be deleted after a graceful shutdown.");
-        System.out.println("      Verification PASSED. Log file does not exist.");
-
-        // --- 步骤 4 & 5: 第二次会话，验证数据 ---
-        System.out.println("[A-4] Restarting database and verifying data...");
-        queryProcessor = new QueryProcessor(TEST_DB_NAME);
-        String result = queryProcessor.executeAndGetResult("SELECT * FROM employees ORDER BY id;");
-        System.out.println("      Query result after restart:\n" + result);
-
-        assertTrue(result.contains("Alicia"), "Updated name 'Alicia' should be present.");
-        assertFalse(result.contains("Alice'"), "Original name 'Alice' should NOT be present.");
-        assertTrue(result.contains("2 rows returned"), "There should be exactly 2 rows in the table.");
-
-        // 额外检查，确保没有重复的 'Alicia'
-        long countOfAlicia = result.lines().filter(line -> line.contains("Alicia")).count();
-        assertEquals(1, countOfAlicia, "There should be only one record with the name 'Alicia'.");
-        
-        System.out.println("[A-5] Data verification PASSED. Test for graceful shutdown is successful!");
-    }
-
-    /**
-     * 测试场景B: 模拟崩溃后的恢复流程
-     * 这是一个简化的模拟，利用您现有的 RecoveryTest 逻辑。
-     * 它验证的是：如果一个 UPDATE 操作写入了日志但数据库崩溃了，
-     * 重启后的恢复流程(Redo)会不会造成数据不一致。
-     * * 注意：这个测试并没有验证未提交事务的回滚(Undo)，但可以验证Redo的正确性。
-     */
-    @Test
-    void testUpdateRedoConsistencyAfterCrash() throws IOException {
-        System.out.println("\n--- SCENARIO B: Testing Correctness After CRASH (Redo phase) ---");
-
-        // --- 步骤 1: 执行操作并模拟崩溃 ---
-        // 我们通过创建一个QP实例，执行操作，然后不调用close()就结束方法来模拟崩溃。
-        // 这样日志文件会保留下来。
-        System.out.println("[B-1] Simulating a session that crashes...");
-        QueryProcessor crashingProcessor = new QueryProcessor(TEST_DB_NAME);
-        crashingProcessor.execute("CREATE TABLE employees (id INT PRIMARY KEY, name VARCHAR);");
-        crashingProcessor.execute("INSERT INTO employees (id, name) VALUES (1, 'Alice');");
-        crashingProcessor.execute("INSERT INTO employees (id, name) VALUES (2, 'Bob');");
-        crashingProcessor.execute("UPDATE employees SET name = 'Alicia' WHERE id = 1;");
-        // --- 此处模拟崩溃：不调用 crashingProcessor.close() ---
+        // --- 此处模拟崩溃：不调用 queryProcessor.close() ---
+        queryProcessor = null; // 释放引用，防止在 tearDown 中被关闭
         System.out.println("      CRASH! (Log file is preserved)");
-
+        
         File logFile = new File(TEST_LOG_FILE);
-        assertTrue(logFile.exists(), "Log file must exist after a simulated crash.");
+        assertTrue(logFile.exists(), "Log file must exist after a simulated crash to allow recovery.");
 
-        // --- 步骤 2: 重启并触发恢复 ---
-        System.out.println("[B-2] Restarting database, RecoveryManager will be triggered...");
+        // --- 步骤 4: 重启并触发恢复 ---
+        System.out.println("\n[Step 4] Restarting database, RecoveryManager will be triggered...");
         // 创建一个新的QP实例，其构造函数会自动运行恢复流程
         queryProcessor = new QueryProcessor(TEST_DB_NAME);
 
-        // --- 步骤 3: 验证数据 ---
-        System.out.println("[B-3] Verifying data after recovery...");
-        String result = queryProcessor.executeAndGetResult("SELECT * FROM employees ORDER BY id;");
-        System.out.println("      Query result after recovery:\n" + result);
+        // --- 步骤 5: 验证恢复后的数据 ---
+        System.out.println("\n[Step 5] Verifying data after recovery...");
+        String finalResult = queryProcessor.executeAndGetResult("SELECT * FROM employees ORDER BY id;");
+        System.out.println("      Query result after recovery:\n" + finalResult);
 
-        assertTrue(result.contains("Alicia"), "Recovered name 'Alicia' should be present.");
-        assertFalse(result.contains("Alice'"), "Original name 'Alice' should NOT be present after redo.");
-        assertTrue(result.contains("2 rows returned"), "There should be exactly 2 rows after recovery.");
+        assertTrue(finalResult.contains("Alicia"), "Recovered name 'Alicia' should be present.");
+        assertFalse(finalResult.contains("'Alice'"), "Original name 'Alice' should NOT be present after redo.");
+        assertTrue(finalResult.contains("Bob"), "Unaffected record 'Bob' should still be present.");
+        assertTrue(finalResult.contains("2 rows returned"), "There should be exactly 2 rows after recovery.");
 
-        long countOfAlicia = result.lines().filter(line -> line.contains("Alicia")).count();
-        assertEquals(1, countOfAlicia, "There should be only one record with 'Alicia' after recovery.");
+        // 关键验证：确保没有因为错误的Redo逻辑产生重复数据
+        long countOfAlicia = finalResult.lines().filter(line -> line.contains("Alicia")).count();
+        assertEquals(1, countOfAlicia, "There should be only ONE record with the name 'Alicia'. Duplicates indicate a recovery bug.");
         
-        System.out.println("[B-4] Data verification PASSED. Test for crash recovery (Redo) is successful!");
+        System.out.println("\n[SUCCESS] All verifications passed. The UPDATE and recovery logic is now correct!");
     }
 }

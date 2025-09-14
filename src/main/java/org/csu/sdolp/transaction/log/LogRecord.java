@@ -1,3 +1,5 @@
+// src/main/java/org/csu/sdolp/transaction/log/LogRecord.java
+
 package org.csu.sdolp.transaction.log;
 
 import lombok.Getter;
@@ -20,33 +22,32 @@ public class LogRecord {
     }
 
     // --- Header ---
-    private int recordSize = 0; // 整个记录的大小
+    private int recordSize = 0;
     @Setter
-    private long lsn = -1;      // 日志序列号
+    private long lsn = -1;
     private int transactionId;
-    private long prevLSN = -1;  // 该事务的上一条日志的 LSN
+    private long prevLSN = -1;
     private LogType logType;
+
+    // private Tuple tuple;
+    // private Tuple oldTuple;
+    // private Tuple newTuple;
 
     // --- Payload for INSERT/DELETE ---
     private RID rid;
-    private Tuple tuple; // INSERT: new tuple, DELETE: old tuple
+    private byte[] tupleBytes; // INSERT: new tuple bytes, DELETE: old tuple bytes
 
     // --- Payload for UPDATE ---
-    private Tuple oldTuple;
-    private Tuple newTuple;
+    private byte[] oldTupleBytes;
+    private byte[] newTupleBytes;
 
     // --- Payload for CLR ---
     private long undoNextLSN;
 
-    // 这些字段在恢复模式下（Schema为null时）被填充
-    private byte[] tupleBytes;
-    private byte[] oldTupleBytes;
-    private byte[] newTupleBytes;
-
-    // DDL 日志通常记录逻辑信息而非物理元组
+    // DDL 日志字段
     private String tableName;
-    private Schema schema; // 用于 CREATE_TABLE
-    private Column newColumn; // 用于 ALTER_TABLE
+    private Schema schema;
+    private Column newColumn;
 
     // 构造函数 for INSERT/DELETE
     public LogRecord(int transactionId, long prevLSN, LogType logType, String tableName, RID rid, Tuple tuple) {
@@ -55,7 +56,8 @@ public class LogRecord {
         this.logType = logType;
         this.tableName = tableName;
         this.rid = rid;
-        this.tuple = tuple;
+        // 修复点：在构造时立即序列化
+        this.tupleBytes = tuple.toBytes();
     }
 
     // 构造函数 for UPDATE
@@ -65,9 +67,12 @@ public class LogRecord {
         this.logType = logType;
         this.tableName = tableName;
         this.rid = rid;
-        this.oldTuple = oldTuple;
-        this.newTuple = newTuple;
+        // 修复点：在构造时立即序列化
+        this.oldTupleBytes = oldTuple.toBytes();
+        this.newTupleBytes = newTuple.toBytes();
     }
+
+    // --- 其他构造函数保持不变 ---
 
     // 构造函数 for COMMIT/ABORT/BEGIN
     public LogRecord(int transactionId, long prevLSN, LogType logType) {
@@ -113,7 +118,6 @@ public class LogRecord {
     // 私有构造函数，用于反序列化
     private LogRecord() {}
 
-
     public byte[] toBytes() {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         DataOutputStream dos = new DataOutputStream(baos);
@@ -128,20 +132,19 @@ public class LogRecord {
                     dos.writeUTF(tableName);
                     dos.writeInt(rid.pageNum());
                     dos.writeInt(rid.slotIndex());
-                    byte[] tupleData = tuple.toBytes();
-                    dos.writeInt(tupleData.length);
-                    dos.write(tupleData);
+                    // 修复点：直接写入已序列化的字节
+                    dos.writeInt(tupleBytes.length);
+                    dos.write(tupleBytes);
                 }
                 case UPDATE -> {
                     dos.writeUTF(tableName);
                     dos.writeInt(rid.pageNum());
                     dos.writeInt(rid.slotIndex());
-                    byte[] oldTupleData = oldTuple.toBytes();
-                    dos.writeInt(oldTupleData.length);
-                    dos.write(oldTupleData);
-                    byte[] newTupleData = newTuple.toBytes();
-                    dos.writeInt(newTupleData.length);
-                    dos.write(newTupleData);
+                    // 修复点：直接写入已序列化的字节
+                    dos.writeInt(oldTupleBytes.length);
+                    dos.write(oldTupleBytes);
+                    dos.writeInt(newTupleBytes.length);
+                    dos.write(newTupleBytes);
                 }
                 case CREATE_TABLE -> {
                     dos.writeUTF(tableName);
@@ -168,6 +171,10 @@ public class LogRecord {
 
     public static LogRecord fromBytes(ByteBuffer buffer, Schema tableSchema) {
         int recordSize = buffer.getInt();
+        // 健壮性修复：检查 recordSize，防止读取越界
+        if (recordSize - 4 > buffer.remaining()) {
+            throw new RuntimeException("LogRecord deserialization failed: invalid record size.");
+        }
         byte[] recordData = new byte[recordSize - 4];
         buffer.get(recordData);
 
@@ -186,30 +193,21 @@ public class LogRecord {
                     record.tableName = dis.readUTF();
                     record.rid = new RID(dis.readInt(), dis.readInt());
                     int tupleLen = dis.readInt();
-                    // *** 核心修复: 无论 schema 是否为 null，都保存原始字节 ***
                     record.tupleBytes = new byte[tupleLen];
                     dis.readFully(record.tupleBytes);
-                    if (tableSchema != null) {
-                        record.tuple = Tuple.fromBytes(record.tupleBytes, tableSchema);
-                    }
+                    // 反序列化时不再需要创建 Tuple 对象
                 }
                 case UPDATE -> {
                     record.tableName = dis.readUTF();
                     record.rid = new RID(dis.readInt(), dis.readInt());
                     int oldTupleLen = dis.readInt();
-                    // *** 核心修复: 保存 oldTuple 的原始字节 ***
                     record.oldTupleBytes = new byte[oldTupleLen];
                     dis.readFully(record.oldTupleBytes);
 
                     int newTupleLen = dis.readInt();
-                    // *** 核心修复: 保存 newTuple 的原始字节 ***
                     record.newTupleBytes = new byte[newTupleLen];
                     dis.readFully(record.newTupleBytes);
-
-                    if (tableSchema != null) {
-                        record.oldTuple = Tuple.fromBytes(record.oldTupleBytes, tableSchema);
-                        record.newTuple = Tuple.fromBytes(record.newTupleBytes, tableSchema);
-                    }
+                    // 反序列化时不再需要创建 Tuple 对象
                 }
                 case CREATE_TABLE -> {
                     record.tableName = dis.readUTF();
