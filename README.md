@@ -207,8 +207,8 @@ src/main/java/org/csu/sdolp/
 
 这对我来说是莫大的鼓励，也是我继续维护和改进这个项目的动力。谢谢！
 
-[![GitHub Stars](https://github.com/Microindole/sdolp?style=flat-square&logo=github)](https://github.com/Microindole/sdolp/stargazers)
-[![GitHub Forks](https://github.com/Microindole/sdolp?style=flat-square&logo=github)](https://github.com/Microindole/sdolp/network/members)
+[![GitHub Stars](https://img.shields.io/github/stars/Microindole/sdolp?style=flat-square&logo=github)](https://github.com/Microindole/sdolp/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/Microindole/sdolp?style=flat-square&logo=github)](https://github.com/Microindole/sdolp/network/members)
 
 ### 📈 项目统计
 
@@ -227,5 +227,6 @@ src/main/java/org/csu/sdolp/
 本项目采用 MIT 许可证。详情请见 [LICENSE](LICENSE) 文件。
 
 Copyright (c) 2025 The sdolp Project Authors
+
 
 
