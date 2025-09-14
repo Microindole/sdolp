@@ -80,6 +80,9 @@ public class Planner {
         if (ast instanceof GrantStatementNode stmt) {
             return new GrantPlanNode(stmt.privileges(), stmt.tableName(), stmt.username());
         }
+        if (ast instanceof UseDatabaseStatementNode stmt) {
+            return null; // USE语句不需要计划节点，在QueryProcessor中直接处理
+        }
 
         throw new UnsupportedOperationException("Unsupported statement type for planning: " + ast.getClass().getSimpleName());
     }

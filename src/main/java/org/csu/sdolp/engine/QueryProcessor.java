@@ -8,10 +8,7 @@ import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.compiler.lexer.Lexer;
 import org.csu.sdolp.compiler.parser.Parser;
-import org.csu.sdolp.compiler.parser.ast.CreateDatabaseStatementNode;
-import org.csu.sdolp.compiler.parser.ast.DropDatabaseStatementNode;
-import org.csu.sdolp.compiler.parser.ast.ShowDatabasesStatementNode;
-import org.csu.sdolp.compiler.parser.ast.StatementNode;
+import org.csu.sdolp.compiler.parser.ast.*;
 import org.csu.sdolp.compiler.planner.Planner;
 import org.csu.sdolp.compiler.planner.plan.PlanNode;
 import org.csu.sdolp.compiler.semantic.SemanticAnalyzer;
@@ -105,7 +102,8 @@ public class QueryProcessor {
             // Database-level commands are handled outside of transactions for simplicity
             if (ast instanceof CreateDatabaseStatementNode ||
                     ast instanceof ShowDatabasesStatementNode ||
-                    ast instanceof DropDatabaseStatementNode) {
+                    ast instanceof DropDatabaseStatementNode ||
+                    ast instanceof UseDatabaseStatementNode) {
                 PlanNode plan = planner.createPlan(ast);
                 TupleIterator executor = executionEngine.execute(plan, null);
                 return formatResults(executor);
@@ -262,12 +260,16 @@ public class QueryProcessor {
     public TupleIterator createExecutorForQuery(String sql, Transaction txn, Session session) throws Exception {
         String normalizedSql = normalizeSqlForMysql(sql);
 
+        System.out.println("[DEBUG] Creating executor for: " + normalizedSql);
+
         Lexer lexer = new Lexer(normalizedSql);
         Parser parser = new Parser(lexer.tokenize());
         StatementNode ast = parser.parse();
         if (ast == null) {
             return null;
         }
+
+        System.out.println("[DEBUG] AST type: " + ast.getClass().getSimpleName());
 
         if (ast instanceof CreateDatabaseStatementNode || ast instanceof ShowDatabasesStatementNode) {
             PlanNode plan = planner.createPlan(ast);
@@ -283,5 +285,31 @@ public class QueryProcessor {
     public void execute(String sql){
         String result = executeAndGetResult(sql);
         System.out.println(result);
+    }
+
+    public String getTableNameFromAst(StatementNode ast) {
+        if (ast instanceof SelectStatementNode selectNode) {
+            return selectNode.fromTable().getName();
+        }
+        if (ast instanceof InsertStatementNode insertNode) {
+            return insertNode.tableName().getName();
+        }
+        if (ast instanceof DeleteStatementNode deleteNode) {
+            return deleteNode.tableName().getName();
+        }
+        if (ast instanceof UpdateStatementNode updateNode) {
+            return updateNode.tableName().getName();
+        }
+        if (ast instanceof ShowColumnsStatementNode showColumnsNode) {
+            return showColumnsNode.tableName().getName();
+        }
+        if (ast instanceof ShowCreateTableStatementNode showCreateNode) {
+            return showCreateNode.tableName().getName();
+        }
+        if (ast instanceof CreateTableStatementNode createTableNode) {
+            return createTableNode.tableName().getName();
+        }
+        // 如果是其他类型的语句，没有表名，返回null
+        return null;
     }
 }

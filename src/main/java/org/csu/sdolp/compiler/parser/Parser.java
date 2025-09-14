@@ -34,9 +34,10 @@ public class Parser {
 
         StatementNode statement = parseStatement();
 
-        consume(TokenType.SEMICOLON, "Expected ';' at the end of the statement");
-        if (!isAtEnd()) {
-            throw new ParseException(peek(), "Unexpected tokens after semicolon");
+        if (check(TokenType.SEMICOLON)) {
+            advance();
+        } else if (!isAtEnd()) {
+            throw new ParseException(peek(), "Expected ';' at the end of the statement");
         }
         return statement;
     }

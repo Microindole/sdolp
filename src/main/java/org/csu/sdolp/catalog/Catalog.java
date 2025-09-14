@@ -1,5 +1,6 @@
 package org.csu.sdolp.catalog;
 
+import lombok.Getter;
 import org.csu.sdolp.common.model.*;
 import org.csu.sdolp.storage.buffer.BufferPoolManager;
 import org.csu.sdolp.storage.page.Page;
@@ -385,9 +386,10 @@ public class Catalog {
             }
         }
 
-        // 标记删除
+        // 物理删除所有元组。注意：从后往前删除可以避免索引混乱。
+        Collections.sort(slotsToDelete, Collections.reverseOrder());
         for (Integer slotIndex : slotsToDelete) {
-            page.markTupleAsDeleted(slotIndex);
+            page.deleteTuple(slotIndex); // 修改点: 调用物理删除方法
         }
         bufferPoolManager.flushPage(pageId);
     }
@@ -608,6 +610,14 @@ public class Catalog {
                 .add(new PrivilegeInfo(tableName, privilegeType.toUpperCase()));
 
         System.out.println("[Catalog] Granted " + privilegeType + " on " + tableName + " to '" + username + "'.");
+    }
+
+    public Schema getTableSchema(String tableName) {
+        TableInfo tableInfo = tables.get(tableName);
+        if (tableInfo != null) {
+            return tableInfo.getSchema();
+        }
+        return null;
     }
 }
 

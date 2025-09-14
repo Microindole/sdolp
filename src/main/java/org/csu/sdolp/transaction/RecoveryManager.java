@@ -127,9 +127,7 @@ public class RecoveryManager {
                     catalog.addColumn(log.getTableName(), log.getNewColumn());
                 } return;
             // 类型 3: DML 日志，现在可以安全地假设 log.getTableName() 不为 null
-            case INSERT:
-            case DELETE:
-            case UPDATE:
+            case INSERT, DELETE, UPDATE:
                 TableInfo tableInfo = catalog.getTable(log.getTableName());
                 if (tableInfo == null) {
                     System.err.println("WARN: Table '" + log.getTableName() + "' not found for DML op during recovery, skipping LSN=" + log.getLsn());
@@ -138,32 +136,27 @@ public class RecoveryManager {
                 Schema schema = tableInfo.getSchema();
                 TableHeap tableHeap = new TableHeap(bufferPoolManager, tableInfo, logManager, lockManager);
 
-                switch (log.getLogType()) {
-                    case INSERT:
-                        if (isUndo) {
-                            tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
-                        } else {
-                            Tuple tuple = Tuple.fromBytes(log.getTupleBytes(), schema);
-                            // *** 核心修复：调用4参数版本，传入 acquireLock=false ***
-                            tableHeap.insertTuple(tuple, fakeTxn, false, false);
-                        }
-                        break;
-                    case DELETE:
-                        if (isUndo) {
-                            Tuple deletedTuple = Tuple.fromBytes(log.getTupleBytes(), schema);
-                            deletedTuple.setRid(log.getRid());
-                            // *** 核心修复：调用4参数版本，传入 acquireLock=false ***
-                            tableHeap.insertTuple(deletedTuple, fakeTxn, false, false);
-                        } else {
-                            tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
-                        }
-                        break;
-                    case UPDATE:
-                        Tuple oldTuple = Tuple.fromBytes(log.getOldTupleBytes(), schema);
-                        Tuple newTuple = Tuple.fromBytes(log.getNewTupleBytes(), schema);
-                        Tuple tupleToApply = isUndo ? oldTuple : newTuple;
-                        tableHeap.updateTuple(tupleToApply, log.getRid(), fakeTxn, false);
-                        break;
+                // 接下来是处理不同 DML 类型的逻辑
+                if (log.getLogType() == LogRecord.LogType.INSERT) {
+                    if (isUndo) {
+                        tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
+                    } else {
+                        Tuple tuple = Tuple.fromBytes(log.getTupleBytes(), schema);
+                        tableHeap.insertTuple(tuple, fakeTxn, false, false);
+                    }
+                } else if (log.getLogType() == LogRecord.LogType.DELETE) {
+                    if (isUndo) {
+                        Tuple deletedTuple = Tuple.fromBytes(log.getTupleBytes(), schema);
+                        deletedTuple.setRid(log.getRid());
+                        tableHeap.insertTuple(deletedTuple, fakeTxn, false, false);
+                    } else {
+                        tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
+                    }
+                } else if (log.getLogType() == LogRecord.LogType.UPDATE) {
+                    Tuple oldTuple = Tuple.fromBytes(log.getOldTupleBytes(), schema);
+                    Tuple newTuple = Tuple.fromBytes(log.getNewTupleBytes(), schema);
+                    Tuple tupleToApply = isUndo ? oldTuple : newTuple;
+                    tableHeap.updateTuple(tupleToApply, log.getRid(), fakeTxn, false);
                 }
                 break;
         }

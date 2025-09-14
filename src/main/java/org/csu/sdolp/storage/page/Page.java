@@ -205,8 +205,42 @@ public class Page {
         return false;
     }
 
+    public boolean deleteTuple(int slotIndex) {
+        if (slotIndex >= getNumTuples()) {
+            return false;
+        }
+        int tupleOffset = getTupleOffset(slotIndex);
+        int tupleLength = getTupleLength(slotIndex);
 
+        // 1. 移动所有后续元组的数据
+        int freeSpacePointer = getFreeSpacePointer();
+        int dataToMoveSize = tupleOffset - freeSpacePointer;
+        if (dataToMoveSize > 0) {
+            // 使用 System.arraycopy 来移动数据块
+            System.arraycopy(data.array(), freeSpacePointer,
+                    data.array(), freeSpacePointer + tupleLength,
+                    dataToMoveSize);
+        }
+        // 2. 更新空闲空间指针
+        setFreeSpacePointer(freeSpacePointer + tupleLength);
 
+        // 3. 移动所有后续槽位
+        int numTuples = getNumTuples();
+        int slotToMoveSize = (numTuples - 1 - slotIndex) * SLOT_SIZE;
+        if (slotToMoveSize > 0) {
+            System.arraycopy(data.array(), HEADER_SIZE + (slotIndex + 1) * SLOT_SIZE,
+                    data.array(), HEADER_SIZE + slotIndex * SLOT_SIZE,
+                    slotToMoveSize);
+        }
+        // 4. 更新槽位偏移量
+        for (int i = slotIndex; i < numTuples - 1; i++) {
+            setTupleOffset(i, getTupleOffset(i) + tupleLength);
+        }
+        // 5. 更新元组数量
+        setNumTuples(numTuples - 1);
+
+        return true;
+    }
 
     public int getNextPageId() {
         return data.getInt(HEADER_NEXT_PAGE_ID_OFFSET);

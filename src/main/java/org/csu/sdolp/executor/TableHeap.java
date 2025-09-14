@@ -199,7 +199,7 @@ public class TableHeap implements TupleIterator {
                 txn.setPrevLSN(lsn);
             }
 
-            boolean success = page.markTupleAsDeleted(rid.slotIndex());
+            boolean success = page.deleteTuple(rid.slotIndex());
             if (success) {
                 bufferPoolManager.flushPage(page.getPageId());
             }
@@ -240,8 +240,7 @@ public class TableHeap implements TupleIterator {
                 txn.setPrevLSN(lsn);
             }
 
-            // 执行物理更新
-            if (page.markTupleAsDeleted(rid.slotIndex())) {
+            if (page.deleteTuple(rid.slotIndex())) { // 调用物理删除方法
                 // 更新是先删除再插入
                 int newSlotIndex = page.getNumTuples();
                 if(page.insertTuple(newTuple)){
@@ -250,9 +249,10 @@ public class TableHeap implements TupleIterator {
                     return true;
                 }
 
-                // 如果插入失败，撤销删除
-                System.err.println("Update failed: Not enough space on page for in-place update.");
-                page.undoMarkTupleAsDeleted(rid.slotIndex());
+                // 如果插入失败，这里无法“撤销删除”
+                System.err.println("Update failed: Not enough space on page after physical delete.");
+                // 在这种情况下，旧数据已被删除，需要一个更复杂的恢复机制。
+                // 对于当前简化模型，我们可以返回失败。
                 return false;
             }
             return false;

@@ -6,6 +6,9 @@ import org.csu.sdolp.common.exception.SemanticException;
 import org.csu.sdolp.common.model.Column;
 import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
+import org.csu.sdolp.compiler.lexer.Lexer;
+import org.csu.sdolp.compiler.parser.Parser;
+import org.csu.sdolp.compiler.parser.ast.StatementNode;
 import org.csu.sdolp.engine.QueryProcessor;
 import org.csu.sdolp.executor.TupleIterator;
 import org.csu.sdolp.transaction.Transaction;
@@ -232,13 +235,25 @@ public class MysqlProtocolHandler implements Runnable {
                 break;
             case 0x03: // COM_QUERY
                 String sql = new String(commandPacket.payload, 1, commandPacket.payload.length - 1, StandardCharsets.UTF_8);
-                System.out.println("[ConnID: " + connectionId + ", DB: " + currentDb + "] Received SQL: " + sql);
-
+                System.out.println("[DEBUG] Full SQL Query: " + sql);
+                if (!sql.trim().endsWith(";")) {
+                    sql += ";";
+                }
+                String sqlLower = sql.toLowerCase().trim();
+                if (sqlLower.startsWith("use ")) {
+                    String dbNameFromQuery = sqlLower.substring(4).replace(";", "").trim(); // 变量名已修改
+                    try {
+                        switchDatabase(dbNameFromQuery);
+                        sendOkPacket(out, serverSequenceId, 0, 0);
+                    } catch (Exception e) {
+                        sendErrorPacket(out, serverSequenceId, 1049, "42000", "Unknown database '" + dbNameFromQuery + "'");
+                    }
+                    return; // 立即返回，不继续处理
+                }
                 if (queryProcessor == null && !(sql.toLowerCase().contains("create database") || sql.toLowerCase().contains("show databases"))) {
                     sendErrorPacket(out, serverSequenceId, 1046, "3D000", "No database selected");
                     return;
                 }
-
                 if (handleSpecialQuery(sql, out, serverSequenceId)) {
                     return;
                 }
@@ -247,22 +262,39 @@ public class MysqlProtocolHandler implements Runnable {
                 try {
                     TransactionManager transactionManager = queryProcessor.getTransactionManager();
                     txn = transactionManager.begin();
+
+                    // 1. 解析SQL为AST
+                    Lexer lexer = new Lexer(sql);
+                    Parser parser = new Parser(lexer.tokenize());
+                    StatementNode ast = parser.parse();
+
+                    // 2. 从AST中获取表名
+                    String effectiveTableName = queryProcessor.getTableNameFromAst(ast);
+
+                    // 3. 继续执行计划的创建和执行
                     TupleIterator iterator = queryProcessor.createExecutorForQuery(sql, txn, this.session);
 
                     if (iterator != null && iterator.getOutputSchema() != null) {
                         Schema schema = iterator.getOutputSchema();
                         List<Tuple> results = new ArrayList<>();
+                        System.out.println("[DEBUG] Collecting results for query: " + sql);
+                        int rowCount = 0;
+
                         while (iterator.hasNext()) {
-                            results.add(iterator.next());
+                            Tuple tuple = iterator.next();
+                            results.add(tuple);
+                            rowCount++;
                         }
+
+                        System.out.println("[DEBUG] Found " + rowCount + " rows");
 
                         int currentSeqId = serverSequenceId;
                         currentSeqId = sendResultSetHeader(out, currentSeqId, schema.getColumns().size());
-                        currentSeqId = sendFieldPackets(out, currentSeqId, schema);
+                        currentSeqId = sendFieldPackets(out, currentSeqId, schema, effectiveTableName);
                         currentSeqId = sendEofPacket(out, currentSeqId);
 
                         if (!results.isEmpty()) {
-                            currentSeqId = sendRowPackets(out, currentSeqId, results);
+                            currentSeqId = sendRowPackets(out, currentSeqId, results, schema);
                         }
                         sendEofPacket(out, currentSeqId);
                     } else {
@@ -307,8 +339,38 @@ public class MysqlProtocolHandler implements Runnable {
 
     private boolean handleSpecialQuery(String sql, OutputStream out, int sequenceId) throws IOException {
         String sqlLower = sql.toLowerCase().trim();
+        // 处理 SHOW CREATE TABLE
+        if (sqlLower.contains("show create table")) {
+            return handleShowCreateTable(sql, out, sequenceId);
+        }
 
-        // --- 核心修复：为 Navicat 的 schemata 查询提供真实数据 ---
+        // 处理 SHOW FULL COLUMNS
+        if (sqlLower.contains("show full columns") || sqlLower.contains("show columns")) {
+            return handleShowFullColumns(sql, out, sequenceId);
+        }
+        // Handle LIMIT queries with LIMIT 0 (structure check)
+        if (sqlLower.contains("limit 0")) {
+            // This is likely a structure check - return empty result with schema
+            System.out.println("Intercepted LIMIT 0 query (structure check): " + sql);
+            // Don't handle here, let it pass through to get proper schema
+            return false;
+        }
+
+        // Handle information_schema.columns queries
+        if (sqlLower.contains("information_schema.columns")) {
+            return handleInformationSchemaColumns(sql, out, sequenceId);
+        }
+
+        // Handle information_schema.tables queries
+        if (sqlLower.contains("information_schema.tables")) {
+            return handleInformationSchemaTables(sql, out, sequenceId);
+        }
+
+        // Handle SELECT COUNT(*) queries
+        if (sqlLower.startsWith("select count(*)")) {
+            // Let this pass through to the actual query processor
+            return false;
+        }
         if (sqlLower.contains("from information_schema.schemata")) {
             System.out.println("Intercepted information_schema.schemata query. Returning real database list.");
 
@@ -334,7 +396,9 @@ public class MysqlProtocolHandler implements Runnable {
         }
 
         if (sqlLower.startsWith("show ")) {
-            if (sqlLower.contains("variables")) {
+            if (sqlLower.contains("full tables")) {
+                return handleShowFullTables(out, sequenceId);
+            } else if (sqlLower.contains("variables")) {
                 return handleShowVariables(sql, out, sequenceId);
             } else if (sqlLower.contains("engines")) {
                 return handleShowEngines(out, sequenceId);
@@ -399,13 +463,13 @@ public class MysqlProtocolHandler implements Runnable {
         return writePacket(out, writeLengthEncodedInt(fieldCount), sequenceId);
     }
 
-    private int sendFieldPackets(OutputStream out, int sequenceId, Schema schema) throws IOException {
+    private int sendFieldPackets(OutputStream out, int sequenceId, Schema schema, String tableName) throws IOException {
         for (Column col : schema.getColumns()) {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             bos.write(writeLengthEncodedString("def"));           // catalog
             bos.write(writeLengthEncodedString(this.currentDb != null ? this.currentDb : "")); // database
-            bos.write(writeLengthEncodedString(""));              // table name (can be empty)
-            bos.write(writeLengthEncodedString(""));              // org_table
+            bos.write(writeLengthEncodedString(tableName));                       // table name
+            bos.write(writeLengthEncodedString(tableName));                       // org_table
             bos.write(writeLengthEncodedString(col.getName()));   // name
             bos.write(writeLengthEncodedString(col.getName()));   // org_name
             bos.write(0x0c);                                      // length of fixed fields
@@ -445,14 +509,27 @@ public class MysqlProtocolHandler implements Runnable {
         return sequenceId;
     }
 
-    private int sendRowPackets(OutputStream out, int sequenceId, List<Tuple> tuples) throws IOException {
+    private int sendRowPackets(OutputStream out, int sequenceId, List<Tuple> tuples, Schema schema) throws IOException {
         for (Tuple tuple : tuples) {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            for (org.csu.sdolp.common.model.Value val : tuple.getValues()) {
+            for (int i = 0; i < tuple.getValues().size(); i++) {
+                org.csu.sdolp.common.model.Value val = tuple.getValues().get(i);
                 if (val.getValue() == null) {
                     bos.write(0xfb);
                 } else {
-                    bos.write(writeLengthEncodedString(val.getValue().toString()));
+                    switch (schema.getColumns().get(i).getType()) {
+                        case INT:
+                        case BOOLEAN:
+                            // 发送整数的字符串表示，因为MySQL协议的text protocol模式可以处理
+                            bos.write(writeLengthEncodedString(val.getValue().toString()));
+                            break;
+                        case VARCHAR:
+                        case DECIMAL:
+                        case DATE:
+                        default:
+                            bos.write(writeLengthEncodedString(val.getValue().toString()));
+                            break;
+                    }
                 }
             }
             sequenceId = writePacket(out, bos.toByteArray(), sequenceId);
@@ -640,5 +717,277 @@ public class MysqlProtocolHandler implements Runnable {
         sendEofPacket(out, sequenceId + 2);
         sendEofPacket(out, sequenceId + 3);
         return true;
+    }
+
+    private boolean handleShowFullTables(OutputStream out, int sequenceId) throws IOException {
+        System.out.println("Intercepted SHOW FULL TABLES query. Returning table list.");
+
+        // 1. 获取所有表名
+        List<String> tableNames = queryProcessor.getCatalog().getTableNames();
+
+        // 2. 发送结果集头和列描述
+        sequenceId = sendResultSetHeader(out, sequenceId, 2);
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "Tables_in_" + (this.currentDb != null ? this.currentDb : ""));
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "Table_type");
+        sequenceId = sendEofPacket(out, sequenceId);
+
+        // 3. 发送数据行
+        for (String tableName : tableNames) {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            bos.write(writeLengthEncodedString(tableName));
+            bos.write(writeLengthEncodedString("BASE TABLE")); // 暂时硬编码为'BASE TABLE'
+            sequenceId = writePacket(out, bos.toByteArray(), sequenceId);
+        }
+        sendEofPacket(out, sequenceId);
+
+        return true;
+    }
+    private boolean handleInformationSchemaColumns(String sql, OutputStream out, int sequenceId) throws IOException {
+        System.out.println("Intercepted information_schema.columns query");
+
+        // Parse the table name from the query if present
+        String tableName = extractTableNameFromQuery(sql);
+
+        sequenceId = sendResultSetHeader(out, sequenceId, 6);
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "COLUMN_NAME");
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "DATA_TYPE");
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "IS_NULLABLE");
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "COLUMN_DEFAULT");
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "COLUMN_KEY");
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "EXTRA");
+        sequenceId = sendEofPacket(out, sequenceId);
+
+        if (tableName != null && catalog != null) {
+            Schema schema = catalog.getTableSchema(tableName);
+            if (schema != null) {
+                for (Column col : schema.getColumns()) {
+                    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                    bos.write(writeLengthEncodedString(col.getName()));
+                    bos.write(writeLengthEncodedString(col.getType().toString()));
+                    bos.write(writeLengthEncodedString("YES")); // Nullable
+                    bos.write(writeLengthEncodedString("")); // Default
+                    bos.write(writeLengthEncodedString("")); // Key
+                    bos.write(writeLengthEncodedString("")); // Extra
+                    sequenceId = writePacket(out, bos.toByteArray(), sequenceId);
+                }
+            }
+        }
+
+        sendEofPacket(out, sequenceId);
+        return true;
+    }
+
+    private boolean handleInformationSchemaTables(String sql, OutputStream out, int sequenceId) throws IOException {
+        System.out.println("Intercepted information_schema.tables query");
+
+        sequenceId = sendResultSetHeader(out, sequenceId, 2);
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "TABLE_NAME");
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "TABLE_TYPE");
+        sequenceId = sendEofPacket(out, sequenceId);
+
+        List<String> tableNames = catalog.getTableNames();
+        for (String tableName : tableNames) {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            bos.write(writeLengthEncodedString(tableName));
+            bos.write(writeLengthEncodedString("BASE TABLE"));
+            sequenceId = writePacket(out, bos.toByteArray(), sequenceId);
+        }
+
+        sendEofPacket(out, sequenceId);
+        return true;
+    }
+
+    private String extractTableNameFromQuery(String sql) {
+        // Simple extraction - you may need to make this more robust
+        String sqlLower = sql.toLowerCase();
+        if (sqlLower.contains("where table_name")) {
+            int start = sqlLower.indexOf("'", sqlLower.indexOf("table_name")) + 1;
+            int end = sqlLower.indexOf("'", start);
+            if (start > 0 && end > start) {
+                return sql.substring(start, end);
+            }
+        }
+        return null;
+    }
+    private boolean handleShowCreateTable(String sql, OutputStream out, int sequenceId) throws IOException {
+        System.out.println("Intercepted SHOW CREATE TABLE query: " + sql);
+
+        // 从 SQL 中提取表名
+        String tableName = extractTableNameFromShowCreateTable(sql);
+        if (tableName == null || catalog == null) {
+            sendErrorPacket(out, sequenceId, 1146, "42S02", "Table doesn't exist");
+            return true;
+        }
+
+        Schema schema = catalog.getTableSchema(tableName);
+        if (schema == null) {
+            sendErrorPacket(out, sequenceId, 1146, "42S02", "Table '" + tableName + "' doesn't exist");
+            return true;
+        }
+
+        // 构建 CREATE TABLE 语句
+        StringBuilder createTableSql = new StringBuilder();
+        createTableSql.append("CREATE TABLE `").append(tableName).append("` (\n");
+
+        List<Column> columns = schema.getColumns();
+        for (int i = 0; i < columns.size(); i++) {
+            Column col = columns.get(i);
+            createTableSql.append("  `").append(col.getName()).append("` ");
+
+            // 映射数据类型到 MySQL 类型
+            switch (col.getType()) {
+                case INT:
+                    createTableSql.append("INT");
+                    break;
+                case VARCHAR:
+                    createTableSql.append("VARCHAR(255)");
+                    break;
+                case DECIMAL:
+                    createTableSql.append("DECIMAL(10,2)");
+                    break;
+                case DATE:
+                    createTableSql.append("DATE");
+                    break;
+                case BOOLEAN:
+                    createTableSql.append("BOOLEAN");
+                    break;
+                default:
+                    createTableSql.append("VARCHAR(255)");
+            }
+
+            if (i < columns.size() - 1) {
+                createTableSql.append(",");
+            }
+            createTableSql.append("\n");
+        }
+        createTableSql.append(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        // 发送结果
+        sequenceId = sendResultSetHeader(out, sequenceId, 2);
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "Table");
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "Create Table");
+        sequenceId = sendEofPacket(out, sequenceId);
+
+        // 发送数据行
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        bos.write(writeLengthEncodedString(tableName));
+        bos.write(writeLengthEncodedString(createTableSql.toString()));
+        sequenceId = writePacket(out, bos.toByteArray(), sequenceId);
+
+        sendEofPacket(out, sequenceId);
+        return true;
+    }
+
+    private String extractTableNameFromShowCreateTable(String sql) {
+        // 移除反引号并提取表名
+        String pattern = "show\\s+create\\s+table\\s+(`?)([^`\\s]+)(`?)";
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile(pattern, java.util.regex.Pattern.CASE_INSENSITIVE);
+        java.util.regex.Matcher m = p.matcher(sql);
+
+        if (m.find()) {
+            String tableName = m.group(2);
+            // 如果包含数据库名，移除它
+            if (tableName.contains(".")) {
+                tableName = tableName.substring(tableName.lastIndexOf(".") + 1);
+            }
+            return tableName;
+        }
+        return null;
+    }
+    private boolean handleShowFullColumns(String sql, OutputStream out, int sequenceId) throws IOException {
+        System.out.println("Intercepted SHOW FULL COLUMNS query: " + sql);
+
+        // 从 SQL 中提取表名
+        String tableName = extractTableNameFromShowColumns(sql);
+        if (tableName == null || catalog == null) {
+            sendErrorPacket(out, sequenceId, 1146, "42S02", "Table doesn't exist");
+            return true;
+        }
+
+        Schema schema = catalog.getTableSchema(tableName);
+        if (schema == null) {
+            sendErrorPacket(out, sequenceId, 1146, "42S02", "Table '" + tableName + "' doesn't exist");
+            return true;
+        }
+
+        // SHOW FULL COLUMNS 返回更多字段
+        sequenceId = sendResultSetHeader(out, sequenceId, 9);
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "Field");
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "Type");
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "Collation");
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "Null");
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "Key");
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "Default");
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "Extra");
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "Privileges");
+        sequenceId = sendSimpleFieldPacket(out, sequenceId, "Comment");
+        sequenceId = sendEofPacket(out, sequenceId);
+
+        // 发送每列的信息
+        for (Column col : schema.getColumns()) {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            bos.write(writeLengthEncodedString(col.getName()));
+
+            // 类型
+            String typeStr;
+            switch (col.getType()) {
+                case INT:
+                    typeStr = "int(11)";
+                    break;
+                case VARCHAR:
+                    typeStr = "varchar(255)";
+                    break;
+                case DECIMAL:
+                    typeStr = "decimal(10,2)";
+                    break;
+                case DATE:
+                    typeStr = "date";
+                    break;
+                case BOOLEAN:
+                    typeStr = "tinyint(1)";
+                    break;
+                default:
+                    typeStr = "varchar(255)";
+            }
+            bos.write(writeLengthEncodedString(typeStr));
+
+            // Collation
+            bos.write(writeLengthEncodedString("utf8mb4_general_ci"));
+
+            // Null
+            bos.write(writeLengthEncodedString("YES"));
+
+            // Key
+            bos.write(writeLengthEncodedString(""));
+
+            // Default
+            bos.write(0xfb); // NULL
+
+            // Extra
+            bos.write(writeLengthEncodedString(""));
+
+            // Privileges
+            bos.write(writeLengthEncodedString("select,insert,update,references"));
+
+            // Comment
+            bos.write(writeLengthEncodedString(""));
+
+            sequenceId = writePacket(out, bos.toByteArray(), sequenceId);
+        }
+
+        sendEofPacket(out, sequenceId);
+        return true;
+    }
+
+    private String extractTableNameFromShowColumns(String sql) {
+        // 匹配 SHOW [FULL] COLUMNS FROM `table_name`
+        String pattern = "show\\s+(?:full\\s+)?columns\\s+from\\s+(`?)([^`\\s]+)(`?)";
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile(pattern, java.util.regex.Pattern.CASE_INSENSITIVE);
+        java.util.regex.Matcher m = p.matcher(sql);
+
+        if (m.find()) {
+            return m.group(2);
+        }
+        return null;
     }
 }
