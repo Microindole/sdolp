@@ -1,26 +1,5 @@
 package org.csu.sdolp;
 
-import org.csu.sdolp.catalog.Catalog;
-import org.csu.sdolp.catalog.TableInfo;
-import org.csu.sdolp.common.model.*;
-import org.csu.sdolp.executor.FilterExecutor;
-import org.csu.sdolp.executor.ProjectExecutor;
-import org.csu.sdolp.executor.SeqScanExecutor;
-import org.csu.sdolp.executor.TableHeap;
-import org.csu.sdolp.executor.expressions.ComparisonPredicate;
-import org.csu.sdolp.storage.buffer.BufferPoolManager;
-import org.csu.sdolp.storage.disk.DiskManager;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
-import java.io.File;
-import java.io.IOException;
-import java.util.Arrays;
-import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.*;
-
 public class ExecutionTest {
 //    private final String TEST_DB_FILE = "test_execution.db";
 //    private DiskManager diskManager;

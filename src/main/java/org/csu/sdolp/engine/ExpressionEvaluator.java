@@ -1,13 +1,12 @@
 package org.csu.sdolp.engine;
 
-import org.csu.sdolp.common.model.DataType;
 import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.common.model.Value;
-import org.csu.sdolp.compiler.parser.ast.BinaryExpressionNode;
+import org.csu.sdolp.compiler.parser.ast.expression.BinaryExpressionNode;
 import org.csu.sdolp.compiler.parser.ast.ExpressionNode;
-import org.csu.sdolp.compiler.parser.ast.IdentifierNode;
-import org.csu.sdolp.compiler.parser.ast.LiteralNode;
+import org.csu.sdolp.compiler.parser.ast.expression.IdentifierNode;
+import org.csu.sdolp.compiler.parser.ast.expression.LiteralNode;
 
 /**
  * 表达式求值器。

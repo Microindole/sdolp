@@ -2,13 +2,24 @@ package org.csu.sdolp.compiler.semantic;
 
 import org.csu.sdolp.catalog.Catalog;
 import org.csu.sdolp.catalog.TableInfo;
-import org.csu.sdolp.cli.Session;
+import org.csu.sdolp.cli.server.Session;
 import org.csu.sdolp.common.exception.SemanticException;
 import org.csu.sdolp.common.model.Column;
 import org.csu.sdolp.common.model.DataType;
 import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.compiler.lexer.TokenType;
 import org.csu.sdolp.compiler.parser.ast.*;
+import org.csu.sdolp.compiler.parser.ast.dcl.CreateUserStatementNode;
+import org.csu.sdolp.compiler.parser.ast.dcl.GrantStatementNode;
+import org.csu.sdolp.compiler.parser.ast.ddl.AlterTableStatementNode;
+import org.csu.sdolp.compiler.parser.ast.ddl.CreateTableStatementNode;
+import org.csu.sdolp.compiler.parser.ast.ddl.DropTableStatementNode;
+import org.csu.sdolp.compiler.parser.ast.dml.DeleteStatementNode;
+import org.csu.sdolp.compiler.parser.ast.dml.InsertStatementNode;
+import org.csu.sdolp.compiler.parser.ast.dml.SelectStatementNode;
+import org.csu.sdolp.compiler.parser.ast.dml.UpdateStatementNode;
+import org.csu.sdolp.compiler.parser.ast.expression.*;
+import org.csu.sdolp.compiler.parser.ast.misc.ShowTablesStatementNode;
 
 import java.io.IOException;
 import java.time.LocalDate;

@@ -5,6 +5,13 @@ import org.csu.sdolp.compiler.lexer.Lexer;
 import org.csu.sdolp.compiler.lexer.Token;
 import org.csu.sdolp.compiler.parser.Parser;
 import org.csu.sdolp.compiler.parser.ast.*;
+import org.csu.sdolp.compiler.parser.ast.ddl.CreateTableStatementNode;
+import org.csu.sdolp.compiler.parser.ast.dml.DeleteStatementNode;
+import org.csu.sdolp.compiler.parser.ast.dml.InsertStatementNode;
+import org.csu.sdolp.compiler.parser.ast.dml.SelectStatementNode;
+import org.csu.sdolp.compiler.parser.ast.expression.BinaryExpressionNode;
+import org.csu.sdolp.compiler.parser.ast.expression.IdentifierNode;
+import org.csu.sdolp.compiler.parser.ast.expression.LiteralNode;
 import org.junit.Test;
 
 import java.util.List;

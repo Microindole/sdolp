@@ -1,7 +1,7 @@
 package org.csu.sdolp;
 
 import org.csu.sdolp.catalog.Catalog;
-import org.csu.sdolp.cli.Session;
+import org.csu.sdolp.cli.server.Session;
 import org.csu.sdolp.compiler.lexer.Lexer;
 import org.csu.sdolp.compiler.parser.Parser;
 import org.csu.sdolp.compiler.parser.ast.StatementNode;

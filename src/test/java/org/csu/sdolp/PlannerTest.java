@@ -1,7 +1,7 @@
 package org.csu.sdolp;
 
 import org.csu.sdolp.catalog.Catalog;
-import org.csu.sdolp.cli.Session;
+import org.csu.sdolp.cli.server.Session;
 import org.csu.sdolp.common.model.Column;
 import org.csu.sdolp.common.model.DataType;
 import org.csu.sdolp.common.model.Schema;
@@ -10,6 +10,11 @@ import org.csu.sdolp.compiler.parser.Parser;
 import org.csu.sdolp.compiler.parser.ast.StatementNode;
 import org.csu.sdolp.compiler.planner.Planner;
 import org.csu.sdolp.compiler.planner.plan.*;
+import org.csu.sdolp.compiler.planner.plan.ddl.CreateTablePlanNode;
+import org.csu.sdolp.compiler.planner.plan.dml.InsertPlanNode;
+import org.csu.sdolp.compiler.planner.plan.query.FilterPlanNode;
+import org.csu.sdolp.compiler.planner.plan.query.ProjectPlanNode;
+import org.csu.sdolp.compiler.planner.plan.query.SeqScanPlanNode;
 import org.csu.sdolp.compiler.semantic.SemanticAnalyzer;
 import org.csu.sdolp.storage.buffer.BufferPoolManager;
 import org.csu.sdolp.storage.disk.DiskManager;

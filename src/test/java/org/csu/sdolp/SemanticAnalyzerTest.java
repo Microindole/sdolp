@@ -1,7 +1,7 @@
 package org.csu.sdolp;
 
 import org.csu.sdolp.catalog.Catalog;
-import org.csu.sdolp.cli.Session;
+import org.csu.sdolp.cli.server.Session;
 import org.csu.sdolp.common.exception.SemanticException;
 import org.csu.sdolp.common.model.Column;
 import org.csu.sdolp.common.model.DataType;
