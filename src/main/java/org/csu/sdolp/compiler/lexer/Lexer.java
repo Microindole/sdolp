@@ -53,6 +53,9 @@ public class Lexer {
         keywords.put("or", TokenType.OR);
         keywords.put("join", TokenType.JOIN);
         keywords.put("on", TokenType.ON);
+        keywords.put("begin", TokenType.BEGIN);
+        keywords.put("commit", TokenType.COMMIT);
+        keywords.put("rollback", TokenType.ROLLBACK);
         keywords.put("drop", TokenType.DROP);
         keywords.put("alter", TokenType.ALTER);
         keywords.put("add", TokenType.ADD);

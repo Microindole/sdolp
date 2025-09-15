@@ -93,5 +93,10 @@ public enum TokenType {
 
     // ---- 特殊 Token ----
     EOF,        // End-Of-File，表示输入流结束
-    ILLEGAL     // 非法字符，用于错误处理
+    ILLEGAL,     // 非法字符，用于错误处理
+
+    // --- 事务控制关键字 ---
+    BEGIN,      // "BEGIN"
+    COMMIT,     // "COMMIT"
+    ROLLBACK   // "ROLLBACK"
 }

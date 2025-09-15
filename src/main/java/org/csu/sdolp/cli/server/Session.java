@@ -2,6 +2,7 @@ package org.csu.sdolp.cli.server;
 
 import lombok.Getter;
 import lombok.Setter;
+import org.csu.sdolp.transaction.Transaction;
 
 /**
  * 代表一个客户端会话，存储连接状态信息。
@@ -15,6 +16,10 @@ public class Session {
     @Setter
     @Getter
     private String currentDatabase;
+
+    @Setter
+    @Getter
+    private Transaction activeTransaction;
 
     public Session(int connectionId) {
         this.connectionId = connectionId;
@@ -36,6 +41,10 @@ public class Session {
 
     public boolean isAuthenticated() {
         return isAuthenticated;
+    }
+
+    public boolean isInTransaction() {
+        return this.activeTransaction != null;
     }
 
 }

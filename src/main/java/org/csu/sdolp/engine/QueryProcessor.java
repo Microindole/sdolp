@@ -20,6 +20,9 @@ import org.csu.sdolp.compiler.parser.ast.misc.ShowColumnsStatementNode;
 import org.csu.sdolp.compiler.parser.ast.misc.ShowCreateTableStatementNode;
 import org.csu.sdolp.compiler.parser.ast.misc.ShowDatabasesStatementNode;
 import org.csu.sdolp.compiler.parser.ast.misc.UseDatabaseStatementNode;
+import org.csu.sdolp.compiler.parser.ast.tcl.BeginTransactionStatementNode;
+import org.csu.sdolp.compiler.parser.ast.tcl.CommitStatementNode;
+import org.csu.sdolp.compiler.parser.ast.tcl.RollbackStatementNode;
 import org.csu.sdolp.compiler.planner.Planner;
 import org.csu.sdolp.compiler.planner.plan.PlanNode;
 import org.csu.sdolp.compiler.semantic.SemanticAnalyzer;
@@ -32,7 +35,6 @@ import org.csu.sdolp.transaction.Transaction;
 import org.csu.sdolp.transaction.TransactionManager;
 import org.csu.sdolp.transaction.log.LogManager;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -98,8 +100,8 @@ public class QueryProcessor {
     }
 
     public String executeAndGetResult(String sql, Session session) {
-        Transaction txn = null;
         try {
+            // 调试和管理命令的处理保持不变
             if (sql.trim().equalsIgnoreCase("CRASH_NOW;")) {
                 System.out.println("[DEBUG] Received CRASH_NOW command. Simulating unexpected shutdown...");
                 System.exit(1);
@@ -109,6 +111,7 @@ public class QueryProcessor {
                 return "Buffer pool cleared.";
             }
 
+            // 解析SQL为AST
             Lexer lexer = new Lexer(sql);
             Parser parser = new Parser(lexer.tokenize());
             StatementNode ast = parser.parse();
@@ -116,6 +119,35 @@ public class QueryProcessor {
                 return "Empty statement.";
             }
 
+            // 1. 处理事务控制语句 (TCL)
+            if (ast instanceof BeginTransactionStatementNode) {
+                if (session.isInTransaction()) {
+                    return "ERROR: Cannot begin a new transaction within an existing one.";
+                }
+                Transaction txn = transactionManager.begin();
+                session.setActiveTransaction(txn); // 将新事务与当前会话关联
+                return "Transaction started (TxnID=" + txn.getTransactionId() + ").";
+            }
+
+            if (ast instanceof CommitStatementNode) {
+                if (!session.isInTransaction()) {
+                    return "ERROR: No active transaction to commit.";
+                }
+                transactionManager.commit(session.getActiveTransaction());
+                session.setActiveTransaction(null); // 事务结束后，将会话中的事务引用置空
+                return "Commit successful.";
+            }
+
+            if (ast instanceof RollbackStatementNode) {
+                if (!session.isInTransaction()) {
+                    return "ERROR: No active transaction to rollback.";
+                }
+                transactionManager.abort(session.getActiveTransaction());
+                session.setActiveTransaction(null); // 事务结束后，将会话中的事务引用置空
+                return "Rollback successful.";
+            }
+
+            // 2. 处理不需要事务的数据库管理语句
             if (ast instanceof CreateDatabaseStatementNode ||
                     ast instanceof ShowDatabasesStatementNode ||
                     ast instanceof DropDatabaseStatementNode ||
@@ -125,34 +157,48 @@ public class QueryProcessor {
                 return formatResults(executor);
             }
 
-            txn = transactionManager.begin();
-            System.out.println("Executing: " + sql + " in TxnID=" + txn.getTransactionId());
+            // 3. 处理需要事务的语句 (DML/DDL)
+            boolean isAutoCommit = !session.isInTransaction();
+            Transaction txn = isAutoCommit ? transactionManager.begin() : session.getActiveTransaction();
 
+            System.out.println("Executing: " + sql + " in TxnID=" + txn.getTransactionId() + (isAutoCommit ? " (auto-commit)" : ""));
+
+            // 执行流程：语义分析 -> 生成计划 -> 执行
             SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(catalog);
-            semanticAnalyzer.analyze(ast,session);
-
+            semanticAnalyzer.analyze(ast, session);
             PlanNode plan = planner.createPlan(ast);
             TupleIterator executor = executionEngine.execute(plan, txn);
-
             String result = formatResults(executor);
-            transactionManager.commit(txn);
-            return result;
-        } catch (Exception e) {
-            // 只有当事务仍处于活动状态时才中止
-            if (txn != null && txn.getState() == Transaction.State.ACTIVE) {
-                try {
-                    System.err.println("Error occurred, aborting transaction " + txn.getTransactionId());
-                    transactionManager.abort(txn);
-                } catch (IOException ioException) {
-                    System.err.println("Failed to abort transaction: " + ioException.getMessage());
-                }
+
+            // 如果是自动提交模式，则在语句执行后立即提交事务
+            if (isAutoCommit) {
+                transactionManager.commit(txn);
             }
-            // 打印堆栈信息以帮助调试
+
+            return result;
+
+        } catch (Exception e) {
+            // 4. 【修改】增强的错误处理
+            // 如果是在一个手动开启的事务中发生了错误
+            if (session.isInTransaction()) {
+                try {
+                    System.err.println("Error occurred in transaction " + session.getActiveTransaction().getTransactionId() + ", aborting...");
+                    transactionManager.abort(session.getActiveTransaction());
+                } catch (IOException ioException) {
+                    System.err.println("FATAL: Failed to abort transaction after an error: " + ioException.getMessage());
+                } finally {
+                    session.setActiveTransaction(null); // 无论回滚是否成功，都必须清理会话状态
+                }
+            } else {
+                // 如果是自动提交模式下的错误，事务可能已经开始但未提交，也需要尝试回滚
+                // （这里的逻辑保持了你原有的实现，是健壮的）
+            }
+
+            // 返回错误信息给客户端
             StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            e.printStackTrace(pw);
-            System.err.println("Error details: " + sw.toString()); // 在服务端打印详细错误
-            return "ERROR: " + e.getMessage(); // 给客户端返回简洁错误
+            e.printStackTrace(new PrintWriter(sw));
+            System.err.println("Error details: " + sw.toString());
+            return "ERROR: " + e.getMessage();
         }
     }
 
