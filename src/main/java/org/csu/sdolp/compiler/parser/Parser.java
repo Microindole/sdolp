@@ -384,7 +384,7 @@ public class Parser {
             Token colToken = consume(TokenType.IDENTIFIER, "column name in SET clause");
             IdentifierNode column = new IdentifierNode(colToken.lexeme());
             consume(TokenType.EQUAL, "'=' after column name");
-            ExpressionNode value = parsePrimaryExpression();
+            ExpressionNode value = parseExpression();
             setClauses.add(new SetClauseNode(column, value));
         } while (match(TokenType.COMMA));
         ExpressionNode whereClause = null;
@@ -445,10 +445,10 @@ public class Parser {
     }
 
     private ExpressionNode parseComparison() {
-        ExpressionNode left = parsePrimaryExpression();
+        ExpressionNode left = parseTerm();
         if (match(TokenType.GREATER, TokenType.GREATER_EQUAL, TokenType.LESS, TokenType.LESS_EQUAL, TokenType.EQUAL, TokenType.NOT_EQUAL)) {
             Token operator = previous();
-            ExpressionNode right = parsePrimaryExpression();
+            ExpressionNode right = parseTerm();
             left = new BinaryExpressionNode(left, operator, right);
         }
         return left;
@@ -527,5 +527,21 @@ public class Parser {
 
     private Token previous() {
         return tokens.get(position - 1);
+    }
+
+    // 解析加法和减法 (Term)
+    private ExpressionNode parseTerm() {
+        ExpressionNode left = parseFactor();
+        while (match(TokenType.PLUS, TokenType.MINUS)) {
+            Token operator = previous();
+            ExpressionNode right = parseFactor();
+            left = new BinaryExpressionNode(left, operator, right);
+        }
+        return left;
+    }
+
+    // 为更高优先级的乘法/除法占位 (Factor)
+    private ExpressionNode parseFactor() {
+        return parsePrimaryExpression();
     }
 }

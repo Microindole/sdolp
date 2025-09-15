@@ -5,6 +5,7 @@ import org.csu.sdolp.catalog.IndexInfo;
 import org.csu.sdolp.common.model.*;
 import org.csu.sdolp.compiler.parser.ast.expression.LiteralNode;
 import org.csu.sdolp.compiler.parser.ast.expression.SetClauseNode;
+import org.csu.sdolp.engine.ExpressionEvaluator;
 import org.csu.sdolp.executor.TableHeap;
 import org.csu.sdolp.executor.TupleIterator;
 import org.csu.sdolp.storage.buffer.BufferPoolManager;
@@ -54,7 +55,7 @@ public class UpdateExecutor implements TupleIterator {
             for (SetClauseNode clause : setClauses) {
                 String colName = clause.column().getName();
                 int colIndex = getColumnIndex(schema, colName);
-                Value newValue = getLiteralValue((LiteralNode) clause.value());
+                Value newValue = ExpressionEvaluator.evaluateToValue(clause.value(), schema, oldTuple);
                 newValues.set(colIndex, newValue);
             }
             Tuple newTuple = new Tuple(newValues);
@@ -86,7 +87,7 @@ public class UpdateExecutor implements TupleIterator {
     }
 
     /**
-     * 新增辅助方法：更新所有索引。
+     * 辅助方法：更新所有索引。
      */
     private void updateAllIndexesForUpdate(Tuple oldTuple, Tuple newTuple, RID newRid) throws IOException {
         String tableName = tableHeap.getTableInfo().getTableName();
@@ -99,10 +100,12 @@ public class UpdateExecutor implements TupleIterator {
             Value oldKey = oldTuple.getValues().get(keyColumnIndex);
             Value newKey = newTuple.getValues().get(keyColumnIndex);
 
-            // 如果索引键值发生变化，则更新索引
-            if (!oldKey.equals(newKey)) {
-                index.delete(oldKey);
-                index.insert(newKey, newRid);
+            index.delete(oldKey);
+            index.insert(newKey, newRid);
+
+            if (indexInfo.getRootPageId() != index.getRootPageId()) {
+                System.out.println("[Executor] Index '" + indexInfo.getIndexName() + "' root page changed from " + indexInfo.getRootPageId() + " to " + index.getRootPageId() + ". Updating catalog...");
+                catalog.updateIndexRootPageId(indexInfo.getIndexName(), index.getRootPageId());
             }
         }
     }

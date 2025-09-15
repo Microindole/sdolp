@@ -32,6 +32,7 @@ public class TableHeap implements TupleIterator {
     private Page currentPage;
     private int currentSlotIndex;
     private Transaction iteratorTxn;
+    private LockManager.LockMode lockMode;
 
     public TableHeap(BufferPoolManager bufferPoolManager, TableInfo tableInfo, LogManager logManager, LockManager lockManager) {
         this.bufferPoolManager = bufferPoolManager;
@@ -42,13 +43,19 @@ public class TableHeap implements TupleIterator {
         this.lockManager = lockManager;
     }
 
-    public void initIterator(Transaction txn) throws IOException {
+    public void initIterator(Transaction txn, LockManager.LockMode lockMode) throws IOException {
         this.iteratorTxn = txn;
+        this.lockMode = lockMode; // 保存锁模式
         this.currentPageId = this.firstPageId;
         this.currentSlotIndex = 0;
         try {
             if (this.currentPageId != null && this.currentPageId.getPageNum() != -1) {
-                lockManager.lockShared(iteratorTxn, currentPageId);
+                // 根据传入的模式加锁
+                if (this.lockMode == LockManager.LockMode.SHARED) {
+                    lockManager.lockShared(iteratorTxn, currentPageId);
+                } else {
+                    lockManager.lockExclusive(iteratorTxn, currentPageId);
+                }
                 this.currentPage = bufferPoolManager.getPage(this.currentPageId);
             } else {
                 this.currentPage = null;
@@ -57,6 +64,10 @@ public class TableHeap implements TupleIterator {
             Thread.currentThread().interrupt();
             throw new IOException("Thread interrupted while acquiring lock", e);
         }
+    }
+
+    public void initIterator(Transaction txn) throws IOException {
+        initIterator(txn, LockManager.LockMode.SHARED);
     }
 
     @Override
@@ -89,7 +100,12 @@ public class TableHeap implements TupleIterator {
                 if (nextPageNum != -1) {
                     try {
                         PageId nextPid = new PageId(nextPageNum);
-                        lockManager.lockShared(iteratorTxn, nextPid);
+                        // 访问下一页时，也使用正确的锁模式
+                        if (this.lockMode == LockManager.LockMode.SHARED) {
+                            lockManager.lockShared(iteratorTxn, nextPid);
+                        } else {
+                            lockManager.lockExclusive(iteratorTxn, nextPid);
+                        }
                         currentPageId = nextPid;
                         currentPage = bufferPoolManager.getPage(currentPageId);
                         currentSlotIndex = 0;

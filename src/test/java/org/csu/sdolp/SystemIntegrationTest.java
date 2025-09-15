@@ -16,20 +16,37 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 public class SystemIntegrationTest {
 
-    private final String TEST_DB_FILE = "system_integration_test.db";
+    private final String TEST_DB_NAME = "system_integration_test_db";
     private QueryProcessor queryProcessor;
 
     @BeforeEach
     void setUp() {
-        // 每次测试前删除旧的数据库文件
-        new File(TEST_DB_FILE).delete();
-        queryProcessor = new QueryProcessor(TEST_DB_FILE);
+        // --- 核心修复点 2: 调用 deleteDirectory 清理整个数据库目录 ---
+        deleteDirectory(new File("data/" + TEST_DB_NAME));
+        queryProcessor = new QueryProcessor(TEST_DB_NAME);
     }
 
     @AfterEach
     void tearDown() throws IOException {
-        queryProcessor.close();
-        new File(TEST_DB_FILE).delete();
+        if (queryProcessor != null) {
+            queryProcessor.close();
+        }
+        // --- 核心修复点 3: 同样，在测试后也清理整个目录 ---
+        deleteDirectory(new File("data/" + TEST_DB_NAME));
+    }
+
+    // --- 核心修复点 4: 新增递归删除目录的辅助方法 ---
+    private void deleteDirectory(File directory) {
+        if (!directory.exists()) {
+            return;
+        }
+        File[] allContents = directory.listFiles();
+        if (allContents != null) {
+            for (File file : allContents) {
+                deleteDirectory(file);
+            }
+        }
+        directory.delete();
     }
 
     @Test
@@ -39,10 +56,10 @@ public class SystemIntegrationTest {
         queryProcessor.execute("INSERT INTO users (id, name, age) VALUES (1, 'Alice', 20);");
         queryProcessor.execute("INSERT INTO users (id, name, age) VALUES (2, 'Bob', 25);");
         queryProcessor.execute("INSERT INTO users (id, name, age) VALUES (3, 'Charlie', 20);");
-        
+
         System.out.println("\n--- Selecting all users ---");
         queryProcessor.execute("SELECT * FROM users;");
-        
+
         System.out.println("\n--- Selecting users with age = 20 ---");
         queryProcessor.execute("SELECT id, name FROM users WHERE age = 20;");
     }
@@ -177,11 +194,14 @@ public class SystemIntegrationTest {
         queryProcessor.close();
 
         System.out.println("\n--- Reopening database... ---");
-        queryProcessor = new QueryProcessor(TEST_DB_FILE);
+        // --- 修复：确保这里也使用 TEST_DB_NAME ---
+        queryProcessor = new QueryProcessor(TEST_DB_NAME);
 
         System.out.println("\n--- Selecting from table after reopening ---");
         // 这条查询将验证CREATE TABLE和INSERT操作是否都已持久化
-        queryProcessor.execute("SELECT * FROM persistent_table WHERE id = 999;");
+        String result = queryProcessor.executeAndGetResult("SELECT * FROM persistent_table WHERE id = 999;");
+        // 添加一个断言来实际验证
+        assertTrue(result.contains("999"), "Data should persist after reopening.");
     }
     @Test
     void testAggregationAndGroupByFlow() {

@@ -77,6 +77,8 @@ public enum TokenType {
     NOT_EQUAL,  // != 或 <>
     GREATER,    // >
     LESS,       // <
+    PLUS,       // +
+    MINUS,      // -
 
     // ====== 符号和运算符 ======
     ASTERISK,       // *

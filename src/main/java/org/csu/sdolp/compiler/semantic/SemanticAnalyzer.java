@@ -244,13 +244,13 @@ public class SemanticAnalyzer {
         analyzeSelectProjectAndGroupBy(node, leftTableInfo, rightTableInfo);
         // 4. 检查 WHERE 子句
         if (node.whereClause() != null) {
-            // **【修正点】** 使用能处理两个表的 analyzeWhereOrJoinExpression 方法
+            // 使用能处理两个表的 analyzeWhereOrJoinExpression 方法
             analyzeWhereOrJoinExpression(node.whereClause(), leftTableInfo, rightTableInfo);
         }
 
         // 5. 检查 ORDER BY 子句
         if (node.orderByClause() != null) {
-            // **【修正点】** 使用新的辅助方法检查列
+            // 使用新的辅助方法检查列
             checkColumnExistsInJoinedTables(leftTableInfo, rightTableInfo, node.orderByClause().column());
         }
     }
@@ -330,22 +330,21 @@ public class SemanticAnalyzer {
         }
     }
 
-    private void analyzeUpdate(UpdateStatementNode node,Session session) {
+    private void analyzeUpdate(UpdateStatementNode node, Session session) {
         String tableName = node.tableName().getName();
-        // 权限检查
         if (!catalog.hasPermission(session.getUsername(), tableName, "UPDATE")) {
             throw new SemanticException("Access denied for user '" + session.getUsername() + "'. UPDATE command denied on table '" + tableName + "'.");
         }
         TableInfo tableInfo = getTableOrThrow(tableName);
 
         for (SetClauseNode clause : node.setClauses()) {
-            // *** 检查带限定符的列 ***
             Column column = checkColumnExists(tableInfo, clause.column());
             DataType expectedType = column.getType();
-            if (!(clause.value() instanceof LiteralNode literal)) {
-                throw new SemanticException("SET clause currently only supports literal values.");
-            }
-            DataType actualType = getLiteralType(literal);
+
+            // 使用新的辅助方法来递归地分析表达式并获取其最终类型
+            DataType actualType = getExpressionType(clause.value(), tableInfo);
+
+            // 在这里可以添加更宽松的类型转换规则，例如允许将 INT 赋给 DECIMAL
             if (expectedType != actualType) {
                 throw new SemanticException("Data type mismatch for column '" + column.getName() + "'. Expected " + expectedType + " but got " + actualType + ".");
             }
@@ -353,6 +352,31 @@ public class SemanticAnalyzer {
         if (node.whereClause() != null) {
             analyzeExpression(node.whereClause(), tableInfo);
         }
+    }
+
+    private DataType getExpressionType(ExpressionNode expr, TableInfo tableInfo) {
+        if (expr instanceof LiteralNode literal) {
+            return getLiteralType(literal);
+        }
+        if (expr instanceof IdentifierNode idNode) {
+            Column column = checkColumnExists(tableInfo, idNode);
+            return column.getType();
+        }
+        if (expr instanceof BinaryExpressionNode binaryExpr) {
+            DataType leftType = getExpressionType(binaryExpr.left(), tableInfo);
+            DataType rightType = getExpressionType(binaryExpr.right(), tableInfo);
+            // 在这里实现类型检查和推断规则
+            // 目前只支持 INT 类型的算术运算
+            if (leftType == DataType.INT && rightType == DataType.INT) {
+                return DataType.INT; // INT +/- INT -> INT
+            }
+            // 如果类型不匹配，则抛出错误
+            if (leftType != rightType) {
+                throw new SemanticException("Type mismatch in expression: Cannot perform operation on " + leftType + " and " + rightType);
+            }
+            return leftType;
+        }
+        throw new SemanticException("Unsupported expression type in SET clause: " + expr.getClass().getSimpleName());
     }
 
     private void analyzeDropTable(DropTableStatementNode node,Session session) {

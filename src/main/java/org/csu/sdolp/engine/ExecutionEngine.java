@@ -55,7 +55,7 @@ public class ExecutionEngine {
     }
 
     public TupleIterator execute(PlanNode plan, Transaction txn) throws IOException, InterruptedException {
-        return buildExecutorTree(plan, txn);
+        return buildExecutorTree(plan, txn, LockManager.LockMode.SHARED);
     }
 
     private TupleIterator buildExecutorTree(PlanNode plan, Transaction txn) throws IOException, InterruptedException {
@@ -86,15 +86,25 @@ public class ExecutionEngine {
             return new SeqScanExecutor(tableHeap, txn);
         }
         if (plan instanceof DeletePlanNode deletePlan) {
-            TupleIterator childPlan = buildExecutorTree(deletePlan.getChild(), txn);
+            PlanNode childPlanForDelete = new SeqScanPlanNode(deletePlan.getTableInfo());
+            if (deletePlan.getChild() instanceof FilterPlanNode) {
+                childPlanForDelete = new FilterPlanNode(childPlanForDelete, ((FilterPlanNode) deletePlan.getChild()).getPredicate());
+            }
+            TupleIterator childExecutor = buildExecutorTree(childPlanForDelete, txn, LockManager.LockMode.EXCLUSIVE);
             TableHeap tableHeap = new TableHeap(bufferPoolManager, deletePlan.getTableInfo(), logManager, lockManager);
-            return new DeleteExecutor(deletePlan, childPlan, tableHeap, txn, catalog, bufferPoolManager);
+            return new DeleteExecutor(deletePlan, childExecutor, tableHeap, txn, catalog, bufferPoolManager);
         }
         if (plan instanceof UpdatePlanNode updatePlan) {
-            TupleIterator childPlan = buildExecutorTree(updatePlan.getChild(), txn);
+            // 为 UPDATE 操作的子计划（扫描器）明确指定排他锁
+            PlanNode childPlanForUpdate = new SeqScanPlanNode(updatePlan.getTableInfo());
+            if (updatePlan.getChild() instanceof FilterPlanNode) {
+                childPlanForUpdate = new FilterPlanNode(childPlanForUpdate, ((FilterPlanNode) updatePlan.getChild()).getPredicate());
+            }
+            TupleIterator childExecutor = buildExecutorTree(childPlanForUpdate, txn, LockManager.LockMode.EXCLUSIVE);
+
             TableHeap tableHeap = new TableHeap(bufferPoolManager, updatePlan.getTableInfo(), logManager, lockManager);
             return new UpdateExecutor(
-                    childPlan,
+                    childExecutor,
                     tableHeap,
                     updatePlan.getTableInfo().getSchema(),
                     updatePlan.getSetClauses(),
@@ -172,6 +182,20 @@ public class ExecutionEngine {
             return new GrantExecutor(grantPlan, catalog, txn);
         }
         throw new UnsupportedOperationException("Unsupported plan node: " + plan.getClass().getSimpleName());
+    }
+    private TupleIterator buildExecutorTree(PlanNode plan, Transaction txn, LockManager.LockMode lockMode) throws IOException, InterruptedException {
+        if (plan instanceof SeqScanPlanNode seqScanPlan) {
+            TableHeap tableHeap = new TableHeap(bufferPoolManager, seqScanPlan.getTableInfo(), logManager, lockManager);
+            return new SeqScanExecutor(tableHeap, txn, lockMode);
+        }
+        if (plan instanceof FilterPlanNode filterPlan) {
+            // 将锁模式向下传递
+            TupleIterator childExecutor = buildExecutorTree(filterPlan.getChild(), txn, lockMode);
+            AbstractPredicate predicate = createPredicateFromAst(filterPlan.getPredicate(), filterPlan.getChild().getOutputSchema());
+            return new FilterExecutor(childExecutor, predicate);
+        }
+        // 如果是其他类型的节点，则使用默认的构建方法
+        return buildExecutorTree(plan, txn);
     }
     private AbstractPredicate createPredicateFromAst(ExpressionNode expression, Schema schema) {
         if (expression instanceof BinaryExpressionNode node) {

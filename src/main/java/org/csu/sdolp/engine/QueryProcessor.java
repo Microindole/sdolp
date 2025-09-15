@@ -59,6 +59,7 @@ public class QueryProcessor {
     private TransactionManager transactionManager;
     @Getter
     private final DatabaseManager dbManager;
+    @Getter
     private final String dbName;
 
     public QueryProcessor(String dbName) {
@@ -100,6 +101,10 @@ public class QueryProcessor {
     }
 
     public String executeAndGetResult(String sql, Session session) {
+        // --- START OF FIX: Declare transaction and auto-commit flag outside the try-catch block ---
+        Transaction txn = null;
+        boolean isAutoCommit = false;
+        // --- END OF FIX ---
         try {
             // 调试和管理命令的处理保持不变
             if (sql.trim().equalsIgnoreCase("CRASH_NOW;")) {
@@ -124,8 +129,8 @@ public class QueryProcessor {
                 if (session.isInTransaction()) {
                     return "ERROR: Cannot begin a new transaction within an existing one.";
                 }
-                Transaction txn = transactionManager.begin();
-                session.setActiveTransaction(txn); // 将新事务与当前会话关联
+                txn = transactionManager.begin(); // Assign to outer txn
+                session.setActiveTransaction(txn);
                 return "Transaction started (TxnID=" + txn.getTransactionId() + ").";
             }
 
@@ -134,7 +139,7 @@ public class QueryProcessor {
                     return "ERROR: No active transaction to commit.";
                 }
                 transactionManager.commit(session.getActiveTransaction());
-                session.setActiveTransaction(null); // 事务结束后，将会话中的事务引用置空
+                session.setActiveTransaction(null);
                 return "Commit successful.";
             }
 
@@ -143,7 +148,7 @@ public class QueryProcessor {
                     return "ERROR: No active transaction to rollback.";
                 }
                 transactionManager.abort(session.getActiveTransaction());
-                session.setActiveTransaction(null); // 事务结束后，将会话中的事务引用置空
+                session.setActiveTransaction(null);
                 return "Rollback successful.";
             }
 
@@ -158,8 +163,8 @@ public class QueryProcessor {
             }
 
             // 3. 处理需要事务的语句 (DML/DDL)
-            boolean isAutoCommit = !session.isInTransaction();
-            Transaction txn = isAutoCommit ? transactionManager.begin() : session.getActiveTransaction();
+            isAutoCommit = !session.isInTransaction();
+            txn = isAutoCommit ? transactionManager.begin() : session.getActiveTransaction();
 
             System.out.println("Executing: " + sql + " in TxnID=" + txn.getTransactionId() + (isAutoCommit ? " (auto-commit)" : ""));
 
@@ -178,21 +183,28 @@ public class QueryProcessor {
             return result;
 
         } catch (Exception e) {
-            // 4. 【修改】增强的错误处理
-            // 如果是在一个手动开启的事务中发生了错误
-            if (session.isInTransaction()) {
+            // --- START OF FIX: Enhanced error handling ---
+            // This block now correctly handles both manual and auto-commit transaction failures.
+            if (isAutoCommit && txn != null) {
+                // An error occurred within an auto-commit transaction. It must be aborted.
+                try {
+                    System.err.println("Error in auto-commit transaction " + txn.getTransactionId() + ", aborting...");
+                    transactionManager.abort(txn);
+                } catch (IOException ioException) {
+                    System.err.println("FATAL: Failed to abort auto-commit transaction after an error: " + ioException.getMessage());
+                }
+            } else if (session.isInTransaction()) {
+                // An error occurred within a manually started transaction.
                 try {
                     System.err.println("Error occurred in transaction " + session.getActiveTransaction().getTransactionId() + ", aborting...");
                     transactionManager.abort(session.getActiveTransaction());
                 } catch (IOException ioException) {
                     System.err.println("FATAL: Failed to abort transaction after an error: " + ioException.getMessage());
                 } finally {
-                    session.setActiveTransaction(null); // 无论回滚是否成功，都必须清理会话状态
+                    session.setActiveTransaction(null); // Always clean up session state.
                 }
-            } else {
-                // 如果是自动提交模式下的错误，事务可能已经开始但未提交，也需要尝试回滚
-                // （这里的逻辑保持了你原有的实现，是健壮的）
             }
+            // --- END OF FIX ---
 
             // 返回错误信息给客户端
             StringWriter sw = new StringWriter();
@@ -373,5 +385,74 @@ public class QueryProcessor {
         }
         // 如果是其他类型的语句，没有表名，返回null
         return null;
+    }
+
+    /**
+     * 2PC 准备阶段：执行SQL，持久化日志，但暂不提交。
+     * @param txn 要在其上下文中执行的事务
+     * @param sql 要执行的SQL语句
+     * @param session 用户的会话
+     * @return 如果准备成功，返回 true；否则返回 false。
+     */
+    public boolean prepareTransaction(Transaction txn, String sql, Session session) throws Exception {
+        if (txn.getState() != Transaction.State.ACTIVE) {
+            throw new IllegalStateException("Transaction is not in an active state for prepare.");
+        }
+        try {
+            // 执行完整的 SQL 流程，但不提交
+            System.out.println("[Participant TxnID=" + txn.getTransactionId() + "] Preparing: " + sql);
+            Lexer lexer = new Lexer(sql);
+            Parser parser = new Parser(lexer.tokenize());
+            StatementNode ast = parser.parse();
+            SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(catalog);
+            semanticAnalyzer.analyze(ast, session);
+            PlanNode plan = planner.createPlan(ast);
+            TupleIterator executor = executionEngine.execute(plan, txn);
+
+            // --- 核心修复点 ---
+            // 必须消耗掉执行器的所有结果，以确保DML操作被真正执行。
+            // 对于 DML (INSERT, UPDATE, DELETE)，这会返回一个影响行数的元组。
+            // 对于 SELECT，这会返回所有查询结果。
+            while (executor.hasNext()) {
+                executor.next();
+            }
+            // --- 修复结束 ---
+
+            // 关键：强制将所有与此事务相关的日志刷入磁盘
+            logManager.flush();
+            txn.setState(Transaction.State.PREPARED);
+            System.out.println("[Participant TxnID=" + txn.getTransactionId() + "] VOTE COMMIT (Prepared successfully).");
+            return true;
+        } catch (Exception e) {
+            System.err.println("[Participant TxnID=" + txn.getTransactionId() + "] VOTE ABORT (Error during prepare): " + e.getMessage());
+            // 如果准备失败，立即回滚本地事务
+            transactionManager.abort(txn);
+            throw e; // 将异常抛出，以便协调者知道失败
+        }
+    }
+
+    /**
+     * 2PC 提交阶段：提交一个已经处于 PREPARED 状态的事务。
+     * @param txn 要提交的事务
+     */
+    public void commitPrepared(Transaction txn) throws IOException {
+        if (txn.getState() != Transaction.State.PREPARED) {
+            throw new IllegalStateException("Cannot commit a transaction that is not in PREPARED state.");
+        }
+        System.out.println("[Participant TxnID=" + txn.getTransactionId() + "] Received GLOBAL COMMIT. Committing...");
+        transactionManager.commit(txn);
+    }
+
+    /**
+     * 2PC 回滚阶段：回滚一个已经处于 PREPARED 状态的事务。
+     * @param txn 要回滚的事务
+     */
+    public void abortPrepared(Transaction txn) throws IOException {
+        if (txn.getState() != Transaction.State.PREPARED && txn.getState() != Transaction.State.ACTIVE) {
+            System.err.println("[Participant TxnID=" + txn.getTransactionId() + "] Received GLOBAL ABORT for a transaction not in PREPARED state, might be already aborted.");
+            return;
+        }
+        System.out.println("[Participant TxnID=" + txn.getTransactionId() + "] Received GLOBAL ABORT. Aborting...");
+        transactionManager.abort(txn);
     }
 }

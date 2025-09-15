@@ -70,6 +70,10 @@ public class DeleteExecutor implements TupleIterator {
             int keyColumnIndex = plan.getTableInfo().getSchema().getColumnIndex(indexInfo.getColumnName());
             Value key = tuple.getValues().get(keyColumnIndex);
             index.delete(key);
+            if (indexInfo.getRootPageId() != index.getRootPageId()) {
+                System.out.println("[Executor] Index '" + indexInfo.getIndexName() + "' root page changed from " + indexInfo.getRootPageId() + " to " + index.getRootPageId() + ". Updating catalog...");
+                catalog.updateIndexRootPageId(indexInfo.getIndexName(), index.getRootPageId());
+            }
         }
     }
 

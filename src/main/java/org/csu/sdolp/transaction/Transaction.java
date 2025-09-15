@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class Transaction {
     public enum State {
         ACTIVE,
+        PREPARED,
         COMMITTED,
         ABORTED
     }

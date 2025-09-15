@@ -133,6 +133,10 @@ public class Lexer {
         switch (currentChar) {
             case '=':
                 return consumeAndReturn(TokenType.EQUAL, "=");
+            case '+':
+                return consumeAndReturn(TokenType.PLUS, "+");
+            case '-':
+                return consumeAndReturn(TokenType.MINUS, "-");
             case ',':
                 return consumeAndReturn(TokenType.COMMA, ",");
             case ';':
