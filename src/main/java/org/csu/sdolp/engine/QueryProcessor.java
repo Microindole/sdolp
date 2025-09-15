@@ -92,7 +92,9 @@ public class QueryProcessor {
         logManager.flush();
         diskManager.close();
         logManager.close();
-        new File(DatabaseManager.getDbFilePath(this.dbName) + ".log").delete();
+
+        // 现在崩溃恢复功能升级，一下这一行没有注释时程序不是因为崩溃关闭的不会留下日志文件
+        // new File(DatabaseManager.getDbFilePath(this.dbName) + ".log").delete();
     }
 
     public String executeAndGetResult(String sql, Session session) {

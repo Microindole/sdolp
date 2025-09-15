@@ -1,9 +1,11 @@
 package org.csu.sdolp.cli.client;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
+import javax.swing.*;
+import javax.swing.filechooser.FileNameExtensionFilter;
+import java.awt.*;
+import java.io.*;
 import java.net.Socket;
+import java.nio.file.Files;
 import java.util.Scanner;
 
 public class InteractiveShell {
@@ -43,6 +45,17 @@ public class InteractiveShell {
                 // 根据登录的用户名显示不同的提示符
                 System.out.print(username + "@" + currentDb + "> ");
                 String line = consoleScanner.nextLine();
+                //自动导入
+                if (line.equalsIgnoreCase("import;")) {
+                    handleGraphicalImport(consoleScanner, out, in);
+                    continue;
+                }
+                //手动导入
+                if (line.trim().toLowerCase().startsWith("source ")) {
+                    executeSqlFile(line.trim(), out, in);
+                    continue; // 执行完文件后，继续下一次循环
+                }
+
 
                 commandBuilder.append(line.trim()).append(" ");
                 if (!line.trim().endsWith(";")) {
@@ -85,4 +98,87 @@ public class InteractiveShell {
         }
         System.out.println("Bye!");
     }
+    private static void executeSqlFile(String sourceCommand, PrintWriter out, BufferedReader in) {
+        String filePath = sourceCommand.substring("source".length()).trim();
+        if (filePath.endsWith(";")) {
+            filePath = filePath.substring(0, filePath.length() - 1);
+        }
+
+        File sqlFile = new File(filePath);
+        if (!sqlFile.exists()) {
+            System.err.println("ERROR: File not found: " + sqlFile.getAbsolutePath());
+            return;
+        }
+
+        System.out.println("Executing SQL script from: " + filePath);
+        try {
+            String content = new String(Files.readAllBytes(sqlFile.toPath()));
+
+            content = content.replaceAll("(?m)^--.*$", "");
+
+
+            String[] statements = content.split(";");
+
+            for (String statement : statements) {
+
+                String trimmedStatement = statement.trim().replaceAll("\\s+", " ");
+
+                if (!trimmedStatement.isEmpty()) {
+                    System.out.println("-> " + trimmedStatement);
+
+                    sendCommand(trimmedStatement + ";", out, in);
+                }
+            }
+            System.out.println("Finished executing script.");
+        } catch (IOException e) {
+            System.err.println("Error reading or executing file: " + e.getMessage());
+        }
+    }
+
+    private static void sendCommand(String command, PrintWriter out, BufferedReader in) throws IOException {
+        out.println(command);
+        String serverResponse = in.readLine();
+        if (serverResponse != null) {
+            System.out.println(serverResponse.replace("<br>", "\n"));
+        } else {
+            System.err.println("Connection lost during script execution.");
+            throw new IOException("Connection lost");
+        }
+    }
+
+    private static void handleGraphicalImport(Scanner scanner, PrintWriter out, BufferedReader in) {
+        System.out.println("Opening file chooser...");
+        String filePath = selectSqlFile(scanner);
+
+        if (filePath != null && !filePath.isEmpty()) {
+            executeSqlFile("source " + filePath + ";", out, in);
+        } else {
+            System.out.println("File selection cancelled.");
+        }
+    }
+
+    private static String selectSqlFile(Scanner scanner) {
+        try {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setDialogTitle("请选择要导入的 SQL 文件");
+            // 设置文件过滤器，只显示 .sql 文件
+            FileNameExtensionFilter filter = new FileNameExtensionFilter("SQL Scripts (*.sql)", "sql");
+            chooser.setFileFilter(filter);
+            chooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
+
+            int returnValue = chooser.showOpenDialog(null);
+            if (returnValue == JFileChooser.APPROVE_OPTION) {
+                return chooser.getSelectedFile().getAbsolutePath();
+            } else {
+                return null; // 用户取消了选择
+            }
+        } catch (HeadlessException e) {
+            // 如果在没有图形界面的环境中运行，则降级为手动输入
+            System.out.println("\n检测到非图形界面环境，请手动输入 SQL 文件的完整路径：");
+            System.out.print("File path: ");
+            return scanner.nextLine().trim();
+        }
+    }
 }
+
+

@@ -1,44 +1,48 @@
-# MiniDB: A Relational Database Engine in Java
 
-欢迎来到 MiniDB！这是一个用 Java 从零开始构建的、功能丰富的关系型数据库管理系统。本项目旨在深入探索数据库内核的实现原理，涵盖了从 SQL 解析、查询优化、执行引擎到存储管理、事务控制和崩溃恢复的全过程。
+# MiniDB: 一个用 Java 从零打造的关系型数据库内核
+
+![Java](https://img.shields.io/badge/Java-17+-orange.svg)
+![Maven](https://img.shields.io/badge/Maven-3.5+-blue.svg)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
+
+欢迎来到 MiniDB！
+
+**MiniDB** 是一个由小组合作开发、用 Java 从零开始构建的、功能丰富的关系型数据库管理系统。本项目旨在通过从零开始构建，深入探索数据库内核的实现原理，涵盖了从SQL解析、查询优化、执行引擎到存储管理、事务控制和崩溃恢复的全过程。
+
+> **Note**
+> 这是一个数据库系统课程的小组项目。完整的源代码和项目历史，请访问我们的原始 Gitee 仓库：
+> **https://gitee.com/cxzhang0508/sdolp**
+
+
 
 ## ✨ 核心特性
 
-* **标准 SQL 支持**: 实现了 SQL-92 标准的一个子集，支持 DDL, DML, DCL 和 DQL 操作。
-    * **DDL**: `CREATE/DROP/ALTER TABLE`, `CREATE/DROP DATABASE`, `CREATE INDEX`
-    * **DML**: `INSERT`, `UPDATE`, `DELETE`, `SELECT` (支持 `JOIN`, `WHERE`, `GROUP BY`, `ORDER BY`, `LIMIT`)
-    * **DCL**: `CREATE USER`, `GRANT`
-    * **辅助命令**: `SHOW TABLES/DATABASES`, `USE`
-* **客户端/服务器架构**:
-    * **原生TCP服务器** (`ServerHost`):
-      为自定义的 `InteractiveShell` 客户端提供服务。
-    * **MySQL 协议兼容** (`ServerRemote`):
-      允许使用标准的数据库工具（如 Navicat, DBeaver, MySQL Workbench）进行连接和操作。
-* **分层式编译器**: 包含一个经典的四阶段查询编译器：
-    1.  **词法分析器 (Lexer)**: 将 SQL 字符串分解为 Token 流。
-    2.  **语法分析器 (Parser)**:
-        使用递归下降法将 Token 流构建为抽象语法树 (AST)。
-    3.  **语义分析器 (Semantic Analyzer)**:
-        检查 AST 的逻辑正确性，如表名、列名是否存在，数据类型是否匹配等。
-    4.  **计划生成器 (Planner)**: 将 AST 转换为可执行的物理计划树。
-* **火山模型执行引擎**:
-  采用标准的火山迭代模型（TupleIterator），支持多种执行算子（如顺序扫描, 索引扫描, 过滤, 投影, 连接, 排序, 聚合等）。
-* **ACID 事务支持**:
-    * **预写日志 (Write-Ahead Logging, WAL)**:
-      通过 `LogManager` 记录所有数据变更操作，确保原子性和持久性。
-    * **ARIES 崩溃恢复**:
-      实现了 ARIES 协议的核心思想（Analysis, Redo, Undo），确保数据库在意外崩溃后能恢复到一致的状态。
-    * **并发控制**:
-      通过 `LockManager` 实现基于页级别的共享锁（S-Lock）和排他锁（X-Lock），支持基本的并发控制（*注：当前为基础实现*）。
-* **可插拔存储引擎**:
-    * **缓冲池管理器 (`BufferPoolManager`)**:
-      管理内存与磁盘之间的数据页交换，支持 LRU 和 FIFO 替换策略。
-    * **Slotted Page 布局**: 采用高效的页内结构来存储元组，支持变长记录。
-    * **B+树索引**: 实现了 B+树用于主键和二级索引，支持快速的点查询。
-* **完善的辅助工具**:
-    * `DataReader`:
-      一个交互式命令行工具，用于查看表数据或将整个数据库导出为 `.sql` 备份文件。
-    * `LogReader`: 一个用于解析和可读化展示 `.log` 文件的调试工具。
+- **标准 SQL 支持**: 实现了 SQL-92 的一个子集，支持完整的 DDL, DML, DCL 和查询操作。
+  - **DDL**: `CREATE/DROP/ALTER TABLE`, `CREATE/DROP DATABASE`, `CREATE INDEX`
+  - **DML**: `INSERT`, `UPDATE`, `DELETE`, `SELECT` (支持 `JOIN`, `WHERE`, `GROUP BY`, `ORDER BY`, `LIMIT`)
+  - **DCL**: `CREATE USER`, `GRANT`
+  - **辅助命令**: `SHOW TABLES/DATABASES`, `USE`
+- **客户端/服务器架构**:
+  - **原生TCP服务器** (`ServerHost`): 为项目自带的 `InteractiveShell` 客户端提供服务。
+  - **MySQL 协议兼容** (`ServerRemote`): 允许使用 Navicat, DBeaver, MySQL Workbench 等标准工具连接。
+- **分层式编译器**: 包含一个经典的四阶段查询编译器：
+  1.  **词法分析器 (Lexer)**
+  2.  **语法分析器 (Parser)** -> 抽象语法树 (AST)
+  3.  **语义分析器 (Semantic Analyzer)**
+  4.  **计划生成器 (Planner)** -> 物理执行计划
+- **火山模型执行引擎**: 采用标准的火山迭代模型（`TupleIterator`），支持多种执行算子（扫描, 过滤, 投影, 连接, 排序, 聚合等）。
+- **ACID 事务支持**:
+  - **预写日志 (WAL)**: 确保操作的原子性和持久性。
+  - **ARIES 崩溃恢复**: 保证数据库在意外崩溃后能恢复到一致的状态。
+  - **页级并发控制**: 通过共享锁（S-Lock）和排他锁（X-Lock）实现并发控制。
+- **可插拔存储引擎**:
+  - **缓冲池管理器 (`BufferPoolManager`)**: 支持 LRU/FIFO 替换策略，高效管理内存与磁盘的数据页交换。
+  - **B+树索引**: 实现了高性能的 B+树索引结构，支持快速查询。
+- **完善的辅助工具**:
+  - `DataReader`: 交互式工具，用于查看表数据或将数据库**导出为 `.sql` 备份文件**。
+  - `LogReader`: 用于解析和可读化展示 WAL 日志的调试工具。
+
+
 
 ## 🚀 如何运行
 
@@ -103,9 +107,14 @@ mvn clean install
 
   程序会引导你选择要分析的数据库日志。
 
+
+
 ## 📁 项目目录结构
 
 经过重构，项目现在拥有一个清晰、职责分离的目录结构：
+
+<details>
+<summary><strong>📁 点击展开完整目录结构</strong></summary>
 
 ```
 src/main/java/org/csu/sdolp/
@@ -141,6 +150,10 @@ src/main/java/org/csu/sdolp/
     └── ...             # 锁管理器, 恢复管理器等
 ```
 
+</details>
+
+
+
 ### 各模块职责详解
 
 * `catalog`:
@@ -159,3 +172,16 @@ src/main/java/org/csu/sdolp/
   数据库的基石。负责与磁盘进行交互，管理数据在内存和磁盘之间的流动，并提供高效的数据组织方式（如B+树）。
 * `transaction`:
   保证数据库ACID特性的关键模块。实现了 WAL、锁机制和崩溃恢复，是数据库稳定性的核心。
+
+
+
+
+## 📄 许可证
+
+本项目采用 MIT 许可证。详情请见 [LICENSE](LICENSE) 文件。
+
+Copyright (c) 2025 The sdolp Project Authors
+
+
+
+
