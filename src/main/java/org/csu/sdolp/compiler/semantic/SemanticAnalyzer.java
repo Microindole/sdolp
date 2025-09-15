@@ -202,7 +202,6 @@ public class SemanticAnalyzer {
         }
     }
 
-    // ====== (Phase 4) ======
     private void analyzeSelect(SelectStatementNode node,Session session) {
         String tableName = node.fromTable().getName();
         // 权限检查
@@ -228,7 +227,7 @@ public class SemanticAnalyzer {
         if (!node.isSelectAll()) {
             for (ExpressionNode expr : node.selectList()) {
                 if (expr instanceof IdentifierNode idNode) {
-                    // **【修正点】** 使用新的辅助方法检查列
+                    //  使用辅助方法检查列
                     checkColumnExistsInJoinedTables(leftTableInfo, rightTableInfo, idNode);
                     // 如果有 GROUP BY，那么普通列必须是分组键的一部分
                     if (!groupByColumnNames.isEmpty() && !groupByColumnNames.contains(idNode.getName().toLowerCase())) {
@@ -288,7 +287,7 @@ public class SemanticAnalyzer {
             }
         }
 
-        // 此处修改：分析 HAVING 子句
+        // 分析 HAVING 子句
         if (node.havingClause() != null) {
             if (groupByCols == null || groupByCols.isEmpty()) {
                 throw new SemanticException("HAVING clause requires a GROUP BY clause.");
@@ -297,7 +296,7 @@ public class SemanticAnalyzer {
         }
     }
 
-    // 新增方法，用于分析 HAVING 子句
+    // 用于分析 HAVING 子句
     private void analyzeHavingClause(ExpressionNode havingNode, TableInfo fromTable, TableInfo joinTable, List<IdentifierNode> groupByCols) {
         if (havingNode instanceof BinaryExpressionNode binExpr) {
             analyzeHavingClause(binExpr.left(), fromTable, joinTable, groupByCols);
@@ -340,7 +339,7 @@ public class SemanticAnalyzer {
         TableInfo tableInfo = getTableOrThrow(tableName);
 
         for (SetClauseNode clause : node.setClauses()) {
-            // *** 修改点: 检查带限定符的列 ***
+            // *** 检查带限定符的列 ***
             Column column = checkColumnExists(tableInfo, clause.column());
             DataType expectedType = column.getType();
             if (!(clause.value() instanceof LiteralNode literal)) {

@@ -19,7 +19,7 @@ public class BufferPoolManager {
     private final DiskManager diskManager;
     private final int poolSize;
     private final Map<PageId, Page> pageTable;
-    private final BufferPoolReplacer replacer; // 使用接口，支持多种替换策略
+    private final BufferPoolReplacer replacer;
 
     @Getter
     private int hitCount = 0;

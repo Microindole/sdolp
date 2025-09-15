@@ -1,6 +1,5 @@
 package org.csu.sdolp.catalog;
 
-import lombok.Getter;
 import org.csu.sdolp.common.model.*;
 import org.csu.sdolp.storage.buffer.BufferPoolManager;
 import org.csu.sdolp.storage.page.Page;
@@ -333,8 +332,6 @@ public class Catalog {
         // 3. 从 _catalog_columns 元数据页中删除该表的所有列条目
         deleteTupleFromMetaDataPage(columnsTableFirstPageId, columnsTableSchema, 0, new Value(tableId));
 
-        // 注意：我们没有删除表的数据页，这在真实系统中需要一个复杂的空闲空间管理机制来回收。
-        // 在此简化模型中，我们仅删除元数据，数据页将变为不可访问的“孤儿页”。
     }
 
     /**
@@ -389,7 +386,7 @@ public class Catalog {
         // 物理删除所有元组。注意：从后往前删除可以避免索引混乱。
         Collections.sort(slotsToDelete, Collections.reverseOrder());
         for (Integer slotIndex : slotsToDelete) {
-            page.deleteTuple(slotIndex); // 修改点: 调用物理删除方法
+            page.deleteTuple(slotIndex);
         }
         bufferPoolManager.flushPage(pageId);
     }
@@ -403,7 +400,6 @@ public class Catalog {
      * @return A sorted list of table names.
      */
     public List<String> getTableNames() {
-        // Return a sorted list of table names, excluding the internal catalog tables.
         return tables.keySet().stream()
                 .filter(name -> !name.startsWith("_catalog"))
                 .sorted()
@@ -452,7 +448,6 @@ public class Catalog {
         }
         IndexInfo indexInfo = new IndexInfo(indexName, tableName, columnName, rootPageId);
         indices.put(indexName, indexInfo);
-        // 您需要添加将索引信息持久化到磁盘的逻辑
     }
 
     /**
@@ -462,7 +457,6 @@ public class Catalog {
         IndexInfo indexInfo = indices.get(indexName);
         if (indexInfo != null) {
             indexInfo.setRootPageId(newRootPageId);
-            // 在一个更完整的系统中，这里也需要将此变更持久化到磁盘的元数据表中。
             System.out.println("[Catalog] Updated root page ID for index '" + indexName + "' to " + newRootPageId);
         } else {
             throw new IllegalStateException("Cannot update root page for non-existent index '" + indexName + "'.");
@@ -563,7 +557,7 @@ public class Catalog {
         }
 
         // 1. 准备数据
-        int newUserId = userIds.size(); // 简单地使用当前用户数作为新ID
+        int newUserId = userIds.size();
         String passwordHash = hashPassword(password);
         Tuple userTuple = new Tuple(Arrays.asList(new Value(newUserId), new Value(username), new Value(passwordHash)));
 

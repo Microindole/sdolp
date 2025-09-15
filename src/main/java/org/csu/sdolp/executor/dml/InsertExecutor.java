@@ -19,14 +19,12 @@ public class InsertExecutor implements TupleIterator {
     private final InsertPlanNode plan;
     private final TableHeap tableHeap;
     private final Transaction txn;
-    private boolean done = false; // 修复点1：使用 'done' 而不是 'executed'
+    private boolean done = false;
     private static final Schema AFFECTED_ROWS_SCHEMA = new Schema(List.of(new Column("inserted_rows", DataType.INT)));
 
-    // 修复点2：添加必要的成员变量
     private final Catalog catalog;
     private final BufferPoolManager bufferPoolManager;
 
-    // 修复点3：修改构造函数，接收并初始化 catalog 和 bufferPoolManager
     public InsertExecutor(InsertPlanNode plan, TableHeap tableHeap, Transaction txn, Catalog catalog, BufferPoolManager bufferPoolManager) {
         this.plan = plan;
         this.tableHeap = tableHeap;
@@ -45,7 +43,7 @@ public class InsertExecutor implements TupleIterator {
         int insertCount = 0;
 
         for (Tuple tuple : plan.getRawTuples()) {
-            // 核心修复点：检查主键唯一性
+            // 检查主键唯一性
             if (primaryKeyColumnName != null) {
                 int pkIndex = plan.getTableInfo().getSchema().getColumnIndex(primaryKeyColumnName);
                 Value pkValue = tuple.getValues().get(pkIndex);

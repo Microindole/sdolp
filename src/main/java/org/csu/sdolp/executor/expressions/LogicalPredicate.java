@@ -9,7 +9,7 @@ import java.io.IOException;
 public class LogicalPredicate extends AbstractPredicate {
     private final AbstractPredicate left;
     private final AbstractPredicate right;
-    private final String operator; // "AND" or "OR"
+    private final String operator;
 
     public LogicalPredicate(AbstractPredicate left, AbstractPredicate right, String operator) {
         this.left = left;

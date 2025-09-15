@@ -47,17 +47,12 @@ public class Value {
         this.type = DataType.DOUBLE;
         this.value = value;
     }
-    // Making this public to handle types like CHAR that share a Java type (String)
+
     public Value(DataType type, Object value) {
         this.type = type;
         this.value = value;
     }
-    // ======(Phase 4 Bug Fix) ======
-    // 私有构造函数，用于特殊情况，如 AVG 的中间值
-//    private Value(DataType type, Object value) {
-//        this.type = type;
-//        this.value = value;
-//    }
+
     public DataType getType() {
         return type;
     }

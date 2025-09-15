@@ -28,7 +28,7 @@ public class ServerRemote {
             int connectionId = connectionCounter.incrementAndGet();
             System.out.println("Client connected: " + clientSocket.getInetAddress() + " (Connection ID: " + connectionId + ")");
 
-            // 注意：我们不再传递 catalog，因为每个 handler 将管理自己的 QueryProcessor 实例
+            // 每个 handler 管理自己的 QueryProcessor 实例
             MysqlProtocolHandler handler = new MysqlProtocolHandler(clientSocket, connectionId);
             new Thread(handler).start();
         }

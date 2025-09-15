@@ -26,12 +26,10 @@ public class Schema {
     }
 
     public int getTupleLength() {
-        // 对于定长类型，可以直接计算长度，此处简化处理，动态计算
         return columns.size();
     }
 
     public List<String> getColumnNames() {
-        // 使用 Java Stream API 可以非常简洁地实现
         return columns.stream()
                 .map(Column::getName)
                 .collect(Collectors.toList());

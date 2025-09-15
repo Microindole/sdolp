@@ -19,8 +19,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * @author hidyouth
- * @description: 语法分析器
+ * &#064;description:  语法分析器
  * 采用递归下降法，将Token流转换为抽象语法树(AST)
  */
 public class Parser {
@@ -246,22 +245,18 @@ public class Parser {
                 dataTypeToken.type() == TokenType.DECIMAL ||
                 dataTypeToken.type() == TokenType.DATE ||
                 dataTypeToken.type() == TokenType.BOOLEAN ||
-                dataTypeToken.type() == TokenType.FLOAT ||      //
-                dataTypeToken.type() == TokenType.DOUBLE ||     //
-                dataTypeToken.type() == TokenType.CHAR ||       //
+                dataTypeToken.type() == TokenType.FLOAT ||
+                dataTypeToken.type() == TokenType.DOUBLE ||
+                dataTypeToken.type() == TokenType.CHAR ||
                 dataTypeToken.type() == TokenType.IDENTIFIER) {
             advance();
         } else {
             throw new ParseException(peek(), "a valid data type (e.g., INT, VARCHAR, DECIMAL, etc.)");
         }
-        // --- START OF CRITICAL FIX ---
-        // After consuming the data type, we check for a parenthesis to handle lengths like (50).
-        // This logic was missing and caused the ParseException.
         if (match(TokenType.LPAREN)) {
             consume(TokenType.INTEGER_CONST, "Expected a length for " + dataTypeToken.lexeme() + ".");
             consume(TokenType.RPAREN, "Expected ')' after " + dataTypeToken.lexeme() + " length.");
         }
-        // --- END OF CRITICAL FIX ---
         IdentifierNode dataType = new IdentifierNode(dataTypeToken.lexeme());
         return new ColumnDefinitionNode(columnName, dataType);
     }

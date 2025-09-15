@@ -12,7 +12,6 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
-import javax.swing.table.TableRowSorter;
 import java.awt.*;
 import java.io.File;
 import java.io.IOException;
@@ -20,18 +19,16 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Vector;
 import java.util.stream.Collectors;
 
 /**
- * 一个功能强大的、基于Swing GUI的数据库日志文件分析工具 (最终美化修复版)。
+ * 一个功能强大的、基于Swing GUI的数据库日志文件分析工具
  * 特性：
- * 1.  **原生系统观感**: 自动适配Windows/macOS/Linux原生UI风格，界面更美观。
- * 2.  **优化布局与字体**: 使用边距、分组和更清晰的字体，提升视觉体验。
- * 3.  **高级表格渲染**: 支持交替行背景色、内容居中和排序，数据更易读。
- * 4.  **增强的交互**: 提供带图标的按钮、清除筛选功能和更智能的状态栏。
- * 5.  **详细信息面板**: 选中表格行，即可查看该日志的完整解析信息。
- * 6.  **BUG修复**: 解决了点击表格时因类型转换错误导致的程序崩溃问题。
+ * 1.  原生系统观感: 自动适配Windows/macOS/Linux原生UI风格，界面更美观。
+ * 2.  优化布局与字体: 使用边距、分组和更清晰的字体，提升视觉体验。
+ * 3.  高级表格渲染: 支持交替行背景色、内容居中和排序，数据更易读。
+ * 4.  增强的交互: 提供带图标的按钮、清除筛选功能和更智能的状态栏。
+ * 5.  详细信息面板: 选中表格行，即可查看该日志的完整解析信息。
  */
 public class LogReader extends JFrame {
 
@@ -43,7 +40,7 @@ public class LogReader extends JFrame {
     private DefaultTableModel tableModel;
     private JTextArea detailsTextArea;
     private JLabel statusBar;
-    private transient List<LogRecord> currentLogRecords = new ArrayList<>(); // 在内存中保留一份原始数据
+    private transient List<LogRecord> currentLogRecords = new ArrayList<>();
 
     public LogReader() {
         super("MiniDB 日志分析工具");
@@ -149,7 +146,6 @@ public class LogReader extends JFrame {
             loadLogData();
         });
 
-        // --- 核心BUG修复 ---
         // 事件监听器现在从我们自己维护的列表中获取LogRecord，而不是从TableModel获取。
         logTable.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting() && logTable.getSelectedRow() != -1) {
@@ -240,7 +236,7 @@ public class LogReader extends JFrame {
                         }
                     }
 
-                    currentLogRecords = filteredRecords; // 更新我们自己维护的列表
+                    currentLogRecords = filteredRecords;
                     updateTableModel(currentLogRecords);
                     statusBar.setText("成功加载 " + filteredRecords.size() + " of " + allRecords.size() + " 条日志记录。");
 
@@ -303,7 +299,6 @@ public class LogReader extends JFrame {
         worker.execute();
     }
 
-    // ... 其他核心逻辑方法保持不变 ...
     private static String formatLogDetails(LogRecord record, Catalog catalog) {
         StringBuilder sb = new StringBuilder();
         sb.append("--- Log Record Details ---\n");
@@ -319,12 +314,7 @@ public class LogReader extends JFrame {
         }
 
         switch (record.getLogType()) {
-            case INSERT:
-                sb.append(String.format("Table: %s\nRID: %s\nTuple: %s",
-                        record.getTableName(), record.getRid(),
-                        schema != null ? Tuple.fromBytes(record.getTupleBytes(), schema) : "[Schema not found]"));
-                break;
-            case DELETE:
+            case INSERT, DELETE:
                 sb.append(String.format("Table: %s\nRID: %s\nTuple: %s",
                         record.getTableName(), record.getRid(),
                         schema != null ? Tuple.fromBytes(record.getTupleBytes(), schema) : "[Schema not found]"));

@@ -132,7 +132,7 @@ public class BPlusTreeInternalPage extends BPlusTreeNodePage {
 
 
     /**
-     * 【已修正】移除第一个指针，并返回它。同时，它左边的 key 会被删除。
+     * 移除第一个指针，并返回它。同时，它左边的 key 会被删除。
      */
     public int removeAndGetFirstPointer() {
         int keyCount = getKeyCount();

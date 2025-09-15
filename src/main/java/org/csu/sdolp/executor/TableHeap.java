@@ -1,4 +1,3 @@
-// src/main/java/org/csu/sdolp/executor/TableHeap.java
 package org.csu.sdolp.executor;
 
 import lombok.Getter;

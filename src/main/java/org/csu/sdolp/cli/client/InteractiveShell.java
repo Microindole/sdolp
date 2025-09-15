@@ -22,7 +22,6 @@ public class InteractiveShell {
                 BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                 Scanner consoleScanner = new Scanner(System.in)
         ) {
-            // --- 核心修改：在这里实现登录流程 ---
             // 1. 读取服务器的欢迎信息
             String serverWelcome = in.readLine();
             System.out.println("Server: " + serverWelcome);

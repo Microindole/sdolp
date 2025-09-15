@@ -12,7 +12,7 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * 排序执行器。
+ * 排序执行器
  * 这是一个阻塞执行器，它会先拉取所有子节点的元组，在内存中完成排序，然后再向上层返回。
  */
 public class SortExecutor implements TupleIterator {

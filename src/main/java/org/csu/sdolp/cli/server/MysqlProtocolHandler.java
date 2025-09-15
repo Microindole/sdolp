@@ -26,7 +26,7 @@ import java.util.List;
 import java.util.Random;
 
 /**
- * 负责处理与 MySQL 客户端（如 Navicat）的底层网络协议交互。
+ * 负责处理与 MySQL 客户端的底层网络协议交互, 目前只能处理连接 Navicat 的功能
  */
 public class MysqlProtocolHandler implements Runnable {
 
@@ -347,11 +347,8 @@ public class MysqlProtocolHandler implements Runnable {
         if (sqlLower.contains("show full columns") || sqlLower.contains("show columns")) {
             return handleShowFullColumns(sql, out, sequenceId);
         }
-        // Handle LIMIT queries with LIMIT 0 (structure check)
         if (sqlLower.contains("limit 0")) {
-            // This is likely a structure check - return empty result with schema
             System.out.println("Intercepted LIMIT 0 query (structure check): " + sql);
-            // Don't handle here, let it pass through to get proper schema
             return false;
         }
 
@@ -519,7 +516,7 @@ public class MysqlProtocolHandler implements Runnable {
                     switch (schema.getColumns().get(i).getType()) {
                         case INT:
                         case BOOLEAN:
-                            // 发送整数的字符串表示，因为MySQL协议的text protocol模式可以处理
+                            // 发送整数的字符串表示
                             bos.write(writeLengthEncodedString(val.getValue().toString()));
                             break;
                         case VARCHAR:

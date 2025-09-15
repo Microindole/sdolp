@@ -1,11 +1,6 @@
 package org.csu.sdolp.compiler.lexer;
 
-/**
- * @author hidyouth
- * @description: 定义词法单元（Token）的类型，即“种别码”
- *
- * 这是我们SQL语言中所有可能出现的“单词”的分类。
- */
+
 public enum TokenType {
     // ---- 关键字 (Keywords) ----
     SELECT,     // "SELECT"

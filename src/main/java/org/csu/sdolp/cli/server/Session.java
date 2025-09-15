@@ -12,15 +12,13 @@ public class Session {
     @Getter
     private final int connectionId;
     private boolean isAuthenticated = false;
-    // <-- 新增
-    // <-- 新增
     @Setter
     @Getter
     private String currentDatabase;
 
     public Session(int connectionId) {
         this.connectionId = connectionId;
-        this.username = null; // Initially not logged in
+        this.username = null;
     }
 
     private Session(int connectionId, String username) {

@@ -127,68 +127,6 @@ public class RecoveryManager {
                 if (!isUndo) {
                     catalog.addColumn(log.getTableName(), log.getNewColumn());
                 } return;
-            // 类型 3: DML 日志
-//            case INSERT, DELETE, UPDATE:
-//                TableInfo tableInfo = catalog.getTable(log.getTableName());
-//                if (tableInfo == null) {
-//                    System.err.println("WARN: Table '" + log.getTableName() + "' not found, skipping LSN=" + log.getLsn());
-//                    return;
-//                }
-//                Schema schema = tableInfo.getSchema();
-//                TableHeap tableHeap = new TableHeap(bufferPoolManager, tableInfo, logManager, lockManager);
-//
-//                if (log.getLogType() == LogRecord.LogType.INSERT) {
-//                    Tuple tupleToInsert = Tuple.fromBytes(log.getTupleBytes(), schema);
-//                    tupleToInsert.setRid(log.getRid()); // 必须从日志中恢复RID
-//                    if (isUndo) {
-//                        // Undo an insert is a simple delete.
-//                        tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
-//                    } else { // REDO
-//                        // IDEMPOTENCY FIX: Only insert if the tuple does NOT already exist at that RID.
-//                        Tuple existingTuple = tableHeap.getTuple(log.getRid(), fakeTxn);
-//                        if (existingTuple == null) {
-//                            tableHeap.insertTuple(tupleToInsert, fakeTxn, false, false);
-//                        }
-//                    }
-//                } else if (log.getLogType() == LogRecord.LogType.DELETE) {
-//                    Tuple deletedTuple = Tuple.fromBytes(log.getTupleBytes(), schema);
-//                    deletedTuple.setRid(log.getRid());
-//                    if (isUndo) {
-//                        // IDEMPOTENCY FIX: Check before re-inserting.
-//                        Tuple existingTuple = tableHeap.getTuple(log.getRid(), fakeTxn);
-//                        if (existingTuple == null) {
-//                            tableHeap.insertTuple(deletedTuple, fakeTxn, false, false);
-//                        }
-//                    } else { // REDO
-//                        // Deleting something that doesn't exist is already idempotent.
-//                        tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
-//                    }
-//                } else if (log.getLogType() == LogRecord.LogType.UPDATE) {
-//                    Tuple oldTuple = Tuple.fromBytes(log.getOldTupleBytes(), schema);
-//                    Tuple newTuple = Tuple.fromBytes(log.getNewTupleBytes(), schema);
-//                    oldTuple.setRid(log.getRid());
-//                    if (isUndo) {
-//                        tableHeap.updateTuple(oldTuple, log.getRid(), fakeTxn, false);
-//                    } else { // REDO
-//                        // 步骤 1: 确保旧的元组槽位被标记为删除（或已不存在）。
-//                        tableHeap.deleteTuple(log.getRid(), fakeTxn, false);
-//                        // 步骤 2: 检查新的元组是否已经存在于表中（由之前的刷盘导致）。
-//                        boolean newTupleExists = false;
-//                        tableHeap.initIterator(fakeTxn);
-//                        while(tableHeap.hasNext()) {
-//                            Tuple currentTuple = tableHeap.next();
-//                            if (currentTuple != null && currentTuple.getValues().equals(newTuple.getValues())) {
-//                                newTupleExists = true;
-//                                break;
-//                            }
-//                        }
-//                        // 步骤 3: 仅在确认新元组不存在时，才执行插入。
-//                        if (!newTupleExists) {
-//                            tableHeap.insertTuple(newTuple, fakeTxn, false, false);
-//                        }
-//                    }
-//                }
-//                break;
             case INSERT, DELETE, UPDATE:
                 TableInfo tableInfo = catalog.getTable(log.getTableName());
                 if (tableInfo == null) {

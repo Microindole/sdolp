@@ -4,7 +4,6 @@ import org.csu.sdolp.compiler.lexer.Token;
 
 /**
  * @author hidyouth
- * @description: 语法分析阶段的自定义异常
  */
 public class ParseException extends RuntimeException {
 

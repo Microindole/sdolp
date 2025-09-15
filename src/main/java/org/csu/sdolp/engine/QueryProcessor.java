@@ -93,7 +93,7 @@ public class QueryProcessor {
         diskManager.close();
         logManager.close();
 
-        // 现在崩溃恢复功能升级，一下这一行没有注释时程序不是因为崩溃关闭的不会留下日志文件
+        // Highlight: 现在崩溃恢复功能升级，一下这一行没有注释时程序不是因为崩溃关闭的不会留下日志文件
         // new File(DatabaseManager.getDbFilePath(this.dbName) + ".log").delete();
     }
 
@@ -116,7 +116,6 @@ public class QueryProcessor {
                 return "Empty statement.";
             }
 
-            // Database-level commands are handled outside of transactions for simplicity
             if (ast instanceof CreateDatabaseStatementNode ||
                     ast instanceof ShowDatabasesStatementNode ||
                     ast instanceof DropDatabaseStatementNode ||

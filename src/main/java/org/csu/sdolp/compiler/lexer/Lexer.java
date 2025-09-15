@@ -5,12 +5,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * @author hidyouth
- * @description: 词法分析器 (Lexer/Scanner)
- *
- * 负责将输入的SQL字符串分解为一系列的Token。
- */
 public class Lexer {
 
     private final String input;
@@ -45,9 +39,9 @@ public class Lexer {
         keywords.put("decimal", TokenType.DECIMAL);
         keywords.put("date", TokenType.DATE);
         keywords.put("boolean", TokenType.BOOLEAN);
-        keywords.put("float", TokenType.FLOAT);   //
-        keywords.put("double", TokenType.DOUBLE); //
-        keywords.put("char", TokenType.CHAR);     //
+        keywords.put("float", TokenType.FLOAT);
+        keywords.put("double", TokenType.DOUBLE);
+        keywords.put("char", TokenType.CHAR);
         keywords.put("true", TokenType.TRUE);
         keywords.put("false", TokenType.FALSE);
         keywords.put("order", TokenType.ORDER);
@@ -70,14 +64,14 @@ public class Lexer {
         keywords.put("avg", TokenType.AVG);
         keywords.put("min", TokenType.MIN);
         keywords.put("max", TokenType.MAX);
-        keywords.put("show", TokenType.SHOW); // show
-        keywords.put("tables", TokenType.TABLES); // tables
+        keywords.put("show", TokenType.SHOW);
+        keywords.put("tables", TokenType.TABLES);
         keywords.put("full", TokenType.FULL);
         keywords.put("user", TokenType.USER);
         keywords.put("identified", TokenType.IDENTIFIED);
         keywords.put("grant", TokenType.GRANT);
         keywords.put("to", TokenType.TO);
-        keywords.put("having", TokenType.HAVING); //
+        keywords.put("having", TokenType.HAVING);
     }
 
     public Lexer(String input) {
@@ -210,14 +204,13 @@ public class Lexer {
             advance();
         }
 
-        // --- 核心修改：检查并处理小数点 ---
+        // --- 检查并处理小数点 ---
         if (position < input.length() && peek() == '.') {
             // 确认小数点后面还有数字，以区分 `table.column` 语法
             if (isDigit(peekNext())) {
-                advance(); // 消耗掉 '.'
-                while (position < input.length() && isDigit(peek())) {
+                do {
                     advance();
-                }
+                } while (position < input.length() && isDigit(peek()));
                 // 如果包含小数点，则识别为 DECIMAL_CONST
                 String number = input.substring(startPos, position);
                 return new Token(TokenType.DECIMAL_CONST, number, line, startCol);
@@ -242,8 +235,6 @@ public class Lexer {
         return new Token(TokenType.STRING_CONST, text, line, startCol);
     }
 
-    // --- 辅助方法 ---
-
     private void skipWhitespace() {
         while (position < input.length()) {
             char ch = peek();
@@ -251,7 +242,7 @@ public class Lexer {
                 advance();
             } else if (ch == '\n') {
                 line++;
-                column = 0; // advance会加1，所以这里设为0
+                column = 0;
                 advance();
             } else {
                 break;

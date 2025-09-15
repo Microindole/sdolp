@@ -38,7 +38,7 @@ import java.util.List;
 import java.util.Vector;
 
 /**
- * 一个功能强大的、基于GUI的数据库交互式Shell客户端 (集成工具版)。
+ * 一个功能强大的、基于GUI的数据库交互式Shell客户端
  */
 public class AdvancedShell extends JFrame {
 
@@ -173,7 +173,6 @@ public class AdvancedShell extends JFrame {
         importButton.addActionListener(e -> importSqlFile());
         toolBar.add(importButton);
 
-        // --- 新增：导出SQL和查看日志的按钮 ---
         JButton exportButton = new JButton("💾 导出SQL");
         exportButton.addActionListener(e -> exportDatabase());
         toolBar.add(exportButton);
@@ -368,7 +367,7 @@ public class AdvancedShell extends JFrame {
         worker.execute();
     }
 
-    // --- 新增：显示日志读取器窗口 ---
+    // --- 显示日志读取器窗口 ---
     private void showLogReader() {
         // LogReader本身就是一个JFrame，可以直接创建并显示
         // 为了避免阻塞主GUI，也在一个新的线程中显示它
@@ -379,13 +378,10 @@ public class AdvancedShell extends JFrame {
         });
     }
 
-    // --- 新增：导出数据库为SQL文件 ---
+    // --- 导出数据库为SQL文件 ---
     private void exportDatabase() {
-        String currentDb = "default"; // 假设我们总是导出当前连接的数据库
-        // 注意：这里需要一种方式来获取当前 'USE' 的数据库名，我们暂时硬编码
+        String currentDb = "default";
 
-        // DataReader的逻辑需要被重构为非静态方法或一个可实例化的类
-        // 这里我们暂时用一个简化的方式，直接调用其逻辑
         JFileChooser chooser = new JFileChooser();
         chooser.setDialogTitle("请选择SQL文件的保存位置");
         chooser.setSelectedFile(new File(currentDb + "_dump.sql"));
@@ -399,8 +395,6 @@ public class AdvancedShell extends JFrame {
             SwingWorker<Void, Void> worker = new SwingWorker<>() {
                 @Override
                 protected Void doInBackground() throws Exception {
-                    // 这里的逻辑直接从DataReader复制和改造而来
-                    // 需要一个独立的数据库连接来执行此操作
                     DataReader.exportDatabaseToFile(currentDb, file);
                     return null;
                 }

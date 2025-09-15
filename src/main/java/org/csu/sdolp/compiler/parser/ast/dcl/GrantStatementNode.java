@@ -7,7 +7,7 @@ import java.util.List;
 
 /**
  * AST 节点: 表示 GRANT 语句
- * e.g., GRANT SELECT, INSERT ON my_table TO 'someuser';
+ * e.g., GRANT SELECT, INSERT ON my_table TO 'some_user';
  */
 public record GrantStatementNode(
         List<IdentifierNode> privileges,

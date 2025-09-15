@@ -69,14 +69,14 @@ public class BPlusTreeLeafPage extends BPlusTreeNodePage {
     }
 
     /**
-     * 辅助方法，获取第 index 个条目的起始偏移量
+     * 获取第 index 个条目的起始偏移量
      */
     private int getEntryOffset(int index) {
         return PAYLOAD_OFFSET + index * ENTRY_SIZE;
     }
 
     /**
-     * 辅助方法，写入一个完整的条目
+     * 写入一个完整的条目
      */
     private void setEntry(int index, Value key, RID rid) {
         int offset = getEntryOffset(index);

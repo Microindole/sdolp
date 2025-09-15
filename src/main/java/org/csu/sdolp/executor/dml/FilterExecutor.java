@@ -28,7 +28,7 @@ public class FilterExecutor implements TupleIterator {
             this.nextTuple = null;
             return result;
         }
-        // 否则，调用 hasNext() 来查找下一个匹配的元组
+        // 调用 hasNext() 来查找下一个匹配的元组
         if (hasNext()) {
             Tuple result = this.nextTuple;
             this.nextTuple = null;

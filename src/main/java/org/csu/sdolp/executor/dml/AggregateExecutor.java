@@ -13,7 +13,7 @@ import java.io.IOException;
 import java.util.*;
 
 /**
- * 聚合执行器 (重构版).
+ * 聚合执行器
  * 这是一个阻塞执行器，它会拉取所有子节点的元组，在内存中进行哈希聚合，然后再向上层返回。
  */
 public class AggregateExecutor implements TupleIterator {
@@ -67,7 +67,7 @@ public class AggregateExecutor implements TupleIterator {
             for (int i = 0; i < plan.getAggregates().size(); i++) {
                 AggregateExpressionNode agg = plan.getAggregates().get(i);
 
-                // 修复点: 正确获取列名并从 tuple 中取值
+                // 正确获取列名并从 tuple 中取值
                 Value tupleVal = agg.isStar() ?
                         new Value(1) :
                         getColumnValue(tuple, ((IdentifierNode) agg.argument()).getName());
@@ -104,7 +104,7 @@ public class AggregateExecutor implements TupleIterator {
             }
             finalResults.add(new Tuple(resultValues));
         }
-        // 此处修改：在聚合完成后，应用 HAVING 子句进行过滤
+        // 在聚合完成后，应用 HAVING 子句进行过滤
         if (plan.getHavingClause() != null) {
             List<Tuple> filteredResults = new ArrayList<>();
             for (Tuple t : finalResults) {

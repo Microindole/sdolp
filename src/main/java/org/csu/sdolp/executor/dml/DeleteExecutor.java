@@ -19,15 +19,13 @@ public class DeleteExecutor implements TupleIterator {
     private final TupleIterator child;
     private final TableHeap tableHeap;
     private final Transaction txn;
-    private boolean done = false; // 修复点1：使用 'done'
+    private boolean done = false;
     private static final Schema AFFECTED_ROWS_SCHEMA = new Schema(List.of(new Column("deleted_rows", DataType.INT)));
 
-    // 修复点2：添加必要的成员变量
     private final DeletePlanNode plan;
     private final Catalog catalog;
     private final BufferPoolManager bufferPoolManager;
 
-    // 修复点3：修改构造函数以接收所有依赖
     public DeleteExecutor(DeletePlanNode plan, TupleIterator child, TableHeap tableHeap, Transaction txn, Catalog catalog, BufferPoolManager bufferPoolManager) {
         this.plan = plan;
         this.child = child;
@@ -50,7 +48,7 @@ public class DeleteExecutor implements TupleIterator {
 
         int deletedCount = 0;
         for (Tuple tuple : tuplesToDelete) {
-            // 核心逻辑：先删除索引，再删除数据
+            // 先删除索引，再删除数据
             updateAllIndexesForDelete(tuple);
             if (tableHeap.deleteTuple(tuple.getRid(), txn)) {
                 deletedCount++;
@@ -61,7 +59,7 @@ public class DeleteExecutor implements TupleIterator {
     }
 
     /**
-     * 新增辅助方法：当删除一个元组前，更新该表上的所有索引。
+     * 辅助方法：当删除一个元组前，更新该表上的所有索引。
      */
     private void updateAllIndexesForDelete(Tuple tuple) throws IOException {
         String tableName = plan.getTableInfo().getTableName();

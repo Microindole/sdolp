@@ -13,12 +13,12 @@ import java.util.List;
  */
 @Getter
 public class Page {
-    public static final int PAGE_SIZE = 4096;//  [cite_start] // 4KB [cite: 78, 124]
+    public static final int PAGE_SIZE = 4096;
     private static final int HEADER_NUM_TUPLES_OFFSET = 0;
     private static final int HEADER_FREE_SPACE_POINTER_OFFSET = 4;
     private static final int HEADER_NEXT_PAGE_ID_OFFSET = 8;
     private static final int HEADER_SIZE = 12;
-    private static final int SLOT_SIZE = 8; // 4 bytes for offset, 4 bytes for length
+    private static final int SLOT_SIZE = 8;
 
     private final PageId pageId;
     private final ByteBuffer data;

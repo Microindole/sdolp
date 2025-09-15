@@ -11,7 +11,6 @@ import org.csu.sdolp.common.model.Tuple;
 
 import java.io.*;
 import java.nio.ByteBuffer;
-import java.util.Arrays;
 
 @Getter
 public class LogRecord {
@@ -56,7 +55,7 @@ public class LogRecord {
         this.logType = logType;
         this.tableName = tableName;
         this.rid = rid;
-        // 修复点：在构造时立即序列化
+        // 在构造时立即序列化
         this.tupleBytes = tuple.toBytes();
     }
 
@@ -67,7 +66,7 @@ public class LogRecord {
         this.logType = logType;
         this.tableName = tableName;
         this.rid = rid;
-        // 修复点：在构造时立即序列化
+        // 在构造时立即序列化
         this.oldTupleBytes = oldTuple.toBytes();
         this.newTupleBytes = newTuple.toBytes();
     }
@@ -140,7 +139,7 @@ public class LogRecord {
                     dos.writeUTF(tableName);
                     dos.writeInt(rid.pageNum());
                     dos.writeInt(rid.slotIndex());
-                    // 修复点：直接写入已序列化的字节
+                    // 直接写入已序列化的字节
                     dos.writeInt(oldTupleBytes.length);
                     dos.write(oldTupleBytes);
                     dos.writeInt(newTupleBytes.length);
@@ -171,7 +170,7 @@ public class LogRecord {
 
     public static LogRecord fromBytes(ByteBuffer buffer, Schema tableSchema) {
         int recordSize = buffer.getInt();
-        // 健壮性修复：检查 recordSize，防止读取越界
+        // 检查 recordSize，防止读取越界
         if (recordSize - 4 > buffer.remaining()) {
             throw new RuntimeException("LogRecord deserialization failed: invalid record size.");
         }

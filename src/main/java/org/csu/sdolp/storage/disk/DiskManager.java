@@ -16,7 +16,6 @@ public class DiskManager {
     private final String dbFilePath;
     private RandomAccessFile dbFile;
 
-    // --- FIX: 隔离文件头和数据区 ---
     // 预留 4KB 作为文件头，专门用于存储元数据
     private static final int DB_FILE_HEADER_SIZE = 4096;
     private static final long FREE_LIST_HEADER_POINTER_OFFSET = 0;

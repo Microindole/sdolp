@@ -45,7 +45,7 @@ public class IndexScanExecutor implements TupleIterator {
                 results.add(tuple);
             }
         }
-        // 注意：当前实现只支持单点查找。范围查找需要修改B+树以支持迭代器。
+        // 当前实现只支持单点查找。范围查找需要修改B+树以支持迭代器。
         this.resultIterator = results.iterator();
     }
 
