@@ -1,10 +1,7 @@
 package org.csu.sdolp.storage.buffer;
 
 import lombok.Getter;
-import org.csu.sdolp.storage.buffer.replacement.BufferPoolReplacer;
-import org.csu.sdolp.storage.buffer.replacement.FIFOReplacer;
-import org.csu.sdolp.storage.buffer.replacement.LRUReplacer;
-import org.csu.sdolp.storage.buffer.replacement.MLFQReplacer;
+import org.csu.sdolp.storage.buffer.replacement.*;
 import org.csu.sdolp.storage.disk.DiskManager;
 import org.csu.sdolp.storage.page.Page;
 import org.csu.sdolp.storage.page.PageId;
@@ -39,6 +36,8 @@ public class BufferPoolManager {
             this.replacer = new FIFOReplacer();
         } else if ("MLFQ".equalsIgnoreCase(strategy)) {
             this.replacer = new MLFQReplacer();
+        } else if ("CLOCK".equalsIgnoreCase(strategy)) {
+            this.replacer = new ClockReplacer();
         } else {
             throw new IllegalArgumentException("Unsupported replacement strategy: " + strategy);
         }

@@ -1,4 +1,4 @@
-package org.csu.sdolp;
+package org.csu.sdolp.replacement;
 
 import org.csu.sdolp.storage.buffer.BufferPoolManager;
 import org.csu.sdolp.storage.disk.DiskManager;
