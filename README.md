@@ -175,52 +175,6 @@ src/main/java/org/csu/sdolp/
 
 
 
-## 👥 作者与贡献
-
-本项目最初由一个课程设计小组共同完成。出于隐私考虑，此处仅列出本 GitHub 仓库的维护者。同样感谢所有未在此列出的、对项目做出贡献的原始成员。
-
-- **[Microindole](https://github.com/Microindole)**
-
-
-
-## ❓ 提问与交流
-
-如果你对项目有任何疑问、建议，或者发现了 Bug，欢迎随时通过 **[GitHub Issues](https://github.com/Microindole/sdolp/issues)** 与我交流。
-
-我会尽我所能回答你的问题！作者有时间也会在这里更新的 ( ´ ▽ ` )ﾉ
-
-
-
-## 📞 联系作者
-
-- **GitHub**: **[@Microindole](https://github.com/Microindole/sdolp)**
-- **Email:**
-  - **项目交流:**  microindole@gmail.com
-  - **个人/其他:**  1513979779@qq.com
-
-<div align="center">
-
-
-## ⭐ 项目支持
-
-如果这个项目对你的学习或工作有所帮助，请别忘了给它点一个 **Star**！
-
-这对我来说是莫大的鼓励，也是我继续维护和改进这个项目的动力。谢谢！
-
-[![GitHub Stars](https://img.shields.io/github/stars/Microindole/sdolp?style=flat-square&logo=github)](https://github.com/Microindole/sdolp)
-[![GitHub Forks](https://img.shields.io/github/forks/Microindole/sdolp?style=flat-square&logo=github)](https://github.com/Microindole/sdolp)
-
-### 📈 项目统计
-
-<div align="center">
-
-![GitHub Stats](https://github-readme-stats.vercel.app/api?username=Microindole&show_icons=true&theme=radical&hide_border=true&count_private=true)
-
-</div>
-
-</div>
-
-
 
 ## 📄 许可证
 
