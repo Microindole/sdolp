@@ -2,10 +2,13 @@
 
 package org.csu.sdolp.executor.dml;
 
+import org.csu.sdolp.catalog.TableInfo;
 import org.csu.sdolp.common.model.Schema;
 import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.common.model.Value;
+import org.csu.sdolp.compiler.planner.plan.PlanNode;
 import org.csu.sdolp.compiler.planner.plan.query.JoinPlanNode;
+import org.csu.sdolp.compiler.planner.plan.query.SeqScanPlanNode;
 import org.csu.sdolp.engine.ExpressionEvaluator; // 我们将需要它
 import org.csu.sdolp.executor.TupleIterator;
 
@@ -22,7 +25,9 @@ public class JoinExecutor implements TupleIterator {
     private final TupleIterator leftChild;
     private final TupleIterator rightChild;
     private final Schema outputSchema;
-
+    // 此处修改：新增成员变量来存储左右表的元数据信息
+    private final TableInfo leftTableInfo;
+    private final TableInfo rightTableInfo;
     private Tuple leftTuple; // 当前外层循环的元组
     private List<Tuple> rightTuples; // 内存中缓存的右表所有元组
     private int rightTupleIndex;
@@ -37,6 +42,48 @@ public class JoinExecutor implements TupleIterator {
         this.rightTuples = null;
         this.rightTupleIndex = 0;
         this.nextTuple = null;
+        // 此处修改：通过递归查找来获取底层的 TableInfo，使其更通用
+        this.leftTableInfo = findTableInfo(plan.getLeft());
+        this.rightTableInfo = findTableInfo(plan.getRight());
+
+        if (this.leftTableInfo == null || this.rightTableInfo == null) {
+            throw new IllegalStateException("Could not find table information for one of the join sides.");
+        }
+//        // 此处修改：从子计划中提取 TableInfo
+//        // 这一步是关键，为后续的表达式求值提供必要的上下文
+//        PlanNode leftPlan = plan.getLeft();
+//        PlanNode rightPlan = plan.getRight();
+//
+//        // 假设 JOIN 的直接子节点是 SeqScanPlanNode，这在简单查询中是常见情况
+//        if (leftPlan instanceof SeqScanPlanNode && rightPlan instanceof SeqScanPlanNode) {
+//            this.leftTableInfo = ((SeqScanPlanNode) leftPlan).getTableInfo();
+//            this.rightTableInfo = ((SeqScanPlanNode) rightPlan).getTableInfo();
+//        } else {
+//            // 在更复杂的系统中，这里可能需要递归地向下查找扫描节点
+//            // 但对于当前项目，这个简化是可行的
+//            throw new IllegalStateException("JoinExecutor currently expects its direct children to be SeqScanPlanNodes.");
+//        }
+    }
+    /**
+     * 此处修改：新增一个递归辅助方法来向下遍历计划树，直到找到SeqScanPlanNode以获取TableInfo。
+     * @param node 当前的计划节点
+     * @return 找到的 TableInfo，如果找不到则返回 null
+     */
+    private TableInfo findTableInfo(PlanNode node) {
+        if (node instanceof SeqScanPlanNode seqScanPlan) {
+            return seqScanPlan.getTableInfo();
+        }
+
+        // 这是一个简化的反射式递归，适用于单子节点的计划节点（如Filter, Project, Limit等）
+        // 在真实的数据库中，计划节点的结构会更标准化
+        try {
+            java.lang.reflect.Method getChildMethod = node.getClass().getMethod("getChild");
+            PlanNode childNode = (PlanNode) getChildMethod.invoke(node);
+            return findTableInfo(childNode);
+        } catch (Exception e) {
+            // 如果节点没有 getChild 方法，或者发生其他反射错误，则返回 null
+            return null;
+        }
     }
 
     // 初始化，将右表全部加载到内存
@@ -90,7 +137,7 @@ public class JoinExecutor implements TupleIterator {
                 combinedValues.addAll(rightTuple.getValues());
                 Tuple combinedTuple = new Tuple(combinedValues);
                 // 检查连接条件是否满足
-                if (ExpressionEvaluator.evaluate(plan.getJoinCondition(), outputSchema, combinedTuple)) {
+                if (ExpressionEvaluator.evaluate(plan.getJoinCondition(), outputSchema, combinedTuple,leftTableInfo, rightTableInfo)) {
                     this.nextTuple = combinedTuple; // 找到匹配项，缓存并返回 true
                     return true;
                 }

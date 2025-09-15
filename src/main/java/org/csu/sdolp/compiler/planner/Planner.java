@@ -189,81 +189,193 @@ public class Planner {
         return new CreateIndexPlanNode(indexName, tableName, columnName, tableInfo);
     }
 
-
     /**
-     * 【最终版本】创建 SELECT 查询计划，完整集成了索引选择和您原有的 JOIN 等逻辑。
+     * 【已修复版本】创建 SELECT 查询计划的逻辑
      */
     private PlanNode createSelectPlan(SelectStatementNode ast) {
-        String fromTableName = ast.fromTable().getName();
-        TableInfo fromTableInfo = catalog.getTable(fromTableName);
-        PlanNode plan;
+        // 1. 基础扫描层
+        TableInfo fromTableInfo = catalog.getTable(ast.fromTable().getName());
+        PlanNode plan = new SeqScanPlanNode(fromTableInfo);
 
-        IndexInfo indexInfo = findIndexForPredicate(fromTableName, ast.whereClause());
-
+        // 2. WHERE 过滤层 (使用索引或全表扫描)
+        IndexInfo indexInfo = findIndexForPredicate(fromTableInfo.getTableName(), ast.whereClause());
         if (indexInfo != null) {
-            System.out.println("[Planner] Index found for '" + fromTableName + "." + indexInfo.getColumnName() + "'. Using Index Scan.");
+            System.out.println("[Planner] Index found for '" + fromTableInfo.getTableName() + "." + indexInfo.getColumnName() + "'. Using Index Scan.");
             Value searchValue = extractValueFromPredicate(ast.whereClause());
             plan = new IndexScanPlanNode(fromTableInfo, indexInfo, searchValue);
         } else {
             System.out.println("[Planner] No suitable index found for query. Using Sequential Scan.");
-            plan = new SeqScanPlanNode(fromTableInfo);
             if (ast.whereClause() != null) {
                 plan = new FilterPlanNode(plan, ast.whereClause());
             }
         }
 
+        // 3. JOIN 层
         if (ast.joinTable() != null) {
             TableInfo rightTableInfo = catalog.getTable(ast.joinTable().getName());
             PlanNode rightPlan = new SeqScanPlanNode(rightTableInfo);
             plan = new JoinPlanNode(plan, rightPlan, ast.joinCondition());
         }
-        // 集成 HAVING 子句
-        boolean hasAggregate = ast.selectList().stream()
-                .anyMatch(expr -> expr instanceof AggregateExpressionNode);
-        if (hasAggregate || (ast.groupByClause() != null && !ast.groupByClause().isEmpty())) {
-            List<AggregateExpressionNode> aggregates = ast.selectList().stream()
-                    .filter(AggregateExpressionNode.class::isInstance)
-                    .map(AggregateExpressionNode.class::cast)
-                    .collect(Collectors.toList());
 
-            // 构造输出 Schema
-            List<Column> outputColumns = new ArrayList<>();
+        // 4. 聚合与 HAVING 过滤层
+        // --- START OF FIX ---
+        List<AggregateExpressionNode> selectAggregates = ast.selectList().stream()
+                .filter(AggregateExpressionNode.class::isInstance)
+                .map(AggregateExpressionNode.class::cast)
+                .toList();
+
+        List<AggregateExpressionNode> havingAggregates = new ArrayList<>();
+        if (ast.havingClause() != null) {
+            collectAggregates(ast.havingClause(), havingAggregates);
+        }
+
+        // 合并并去重所有需要计算的聚合函数
+        List<AggregateExpressionNode> allAggregates = new ArrayList<>(selectAggregates);
+        for (AggregateExpressionNode havingAgg : havingAggregates) {
+            // 使用 toString() 作为唯一标识来判断是否已存在
+            if (allAggregates.stream().noneMatch(agg -> agg.toString().equals(havingAgg.toString()))) {
+                allAggregates.add(havingAgg);
+            }
+        }
+
+        boolean hasGroupBy = ast.groupByClause() != null && !ast.groupByClause().isEmpty();
+        if (!allAggregates.isEmpty() || hasGroupBy) {
+            // 为聚合步骤构建中间 Schema，它包含所有分组列和所有聚合列
+            List<Column> intermediateColumns = new ArrayList<>();
             if (ast.groupByClause() != null) {
                 for (IdentifierNode groupByCol : ast.groupByClause()) {
-                    outputColumns.add(findColumnInSchema(plan.getOutputSchema(), groupByCol.getName()));
+                    intermediateColumns.add(findColumnInSchema(plan.getOutputSchema(), groupByCol.getName()));
                 }
             }
-            for (AggregateExpressionNode agg : aggregates) {
-                // 这是一个简化。真实系统中，AVG可能是DECIMAL，COUNT是LONG等。
-                outputColumns.add(new Column(agg.toString(), DataType.INT));
+            for (AggregateExpressionNode agg : allAggregates) {
+                // 简化处理，所有聚合结果都为 INT
+                intermediateColumns.add(new Column(agg.toString(), DataType.INT));
             }
-            Schema aggSchema = new Schema(outputColumns);
-            // 将 havingClause 传递给 AggregatePlanNode
-            plan = new AggregatePlanNode(plan, ast.groupByClause(), aggregates, aggSchema, ast.havingClause());
-        }
-        if (!ast.isSelectAll()&& !hasAggregate) {//若有聚合，投影已经在聚合节点中完成
-            Schema inputSchemaForProject = plan.getOutputSchema();
+            Schema intermediateSchema = new Schema(intermediateColumns);
 
-            List<Column> projectedColumns = new ArrayList<>();
+            // 创建 AggregatePlanNode，传入所有聚合函数
+            plan = new AggregatePlanNode(plan, ast.groupByClause(), allAggregates, intermediateSchema, ast.havingClause());
+        }
+        // --- END OF FIX ---
+
+        // 5. 最终投影层
+        if (!ast.isSelectAll()) {
+            Schema inputForProjectionSchema = plan.getOutputSchema();
+            List<Column> finalProjectedColumns = new ArrayList<>();
             for (ExpressionNode expr : ast.selectList()) {
+                String colName;
                 if (expr instanceof IdentifierNode idNode) {
-                    Column originalColumn = findColumnInSchema(inputSchemaForProject, idNode.getName());
-                    projectedColumns.add(originalColumn);
+                    colName = idNode.getName();
+                } else if (expr instanceof AggregateExpressionNode aggNode) {
+                    colName = aggNode.toString();
+                } else {
+                    // Should be caught by semantic analysis
+                    continue;
                 }
+                finalProjectedColumns.add(findColumnInSchema(inputForProjectionSchema, colName));
             }
-            Schema projectedSchema = new Schema(projectedColumns);
-            plan = new ProjectPlanNode(plan, projectedSchema);
+            Schema finalSchema = new Schema(finalProjectedColumns);
+            plan = new ProjectPlanNode(plan, finalSchema);
         }
 
+        // 6. 排序层
         if (ast.orderByClause() != null) {
             plan = new SortPlanNode(plan, ast.orderByClause());
         }
+
+        // 7. LIMIT 层
         if (ast.limitClause() != null) {
             plan = new LimitPlanNode(plan, ast.limitClause().limit());
         }
 
         return plan;
     }
+
+    /**
+     * 新增的辅助方法，用于递归地从表达式树中收集所有聚合函数节点。
+     */
+    private void collectAggregates(ExpressionNode node, List<AggregateExpressionNode> list) {
+        if (node instanceof AggregateExpressionNode aggNode) {
+            list.add(aggNode);
+        } else if (node instanceof BinaryExpressionNode binNode) {
+            collectAggregates(binNode.left(), list);
+            collectAggregates(binNode.right(), list);
+        }
+    }
+//    /**
+//     * 【最终版本】创建 SELECT 查询计划，完整集成了索引选择和您原有的 JOIN 等逻辑。
+//     */
+//    private PlanNode createSelectPlan(SelectStatementNode ast) {
+//        String fromTableName = ast.fromTable().getName();
+//        TableInfo fromTableInfo = catalog.getTable(fromTableName);
+//        PlanNode plan;
+//
+//        IndexInfo indexInfo = findIndexForPredicate(fromTableName, ast.whereClause());
+//
+//        if (indexInfo != null) {
+//            System.out.println("[Planner] Index found for '" + fromTableName + "." + indexInfo.getColumnName() + "'. Using Index Scan.");
+//            Value searchValue = extractValueFromPredicate(ast.whereClause());
+//            plan = new IndexScanPlanNode(fromTableInfo, indexInfo, searchValue);
+//        } else {
+//            System.out.println("[Planner] No suitable index found for query. Using Sequential Scan.");
+//            plan = new SeqScanPlanNode(fromTableInfo);
+//            if (ast.whereClause() != null) {
+//                plan = new FilterPlanNode(plan, ast.whereClause());
+//            }
+//        }
+//
+//        if (ast.joinTable() != null) {
+//            TableInfo rightTableInfo = catalog.getTable(ast.joinTable().getName());
+//            PlanNode rightPlan = new SeqScanPlanNode(rightTableInfo);
+//            plan = new JoinPlanNode(plan, rightPlan, ast.joinCondition());
+//        }
+//        // 集成 HAVING 子句
+//        boolean hasAggregate = ast.selectList().stream()
+//                .anyMatch(expr -> expr instanceof AggregateExpressionNode);
+//        if (hasAggregate || (ast.groupByClause() != null && !ast.groupByClause().isEmpty())) {
+//            List<AggregateExpressionNode> aggregates = ast.selectList().stream()
+//                    .filter(AggregateExpressionNode.class::isInstance)
+//                    .map(AggregateExpressionNode.class::cast)
+//                    .collect(Collectors.toList());
+//
+//            // 构造输出 Schema
+//            List<Column> outputColumns = new ArrayList<>();
+//            if (ast.groupByClause() != null) {
+//                for (IdentifierNode groupByCol : ast.groupByClause()) {
+//                    outputColumns.add(findColumnInSchema(plan.getOutputSchema(), groupByCol.getName()));
+//                }
+//            }
+//            for (AggregateExpressionNode agg : aggregates) {
+//                // 这是一个简化。真实系统中，AVG可能是DECIMAL，COUNT是LONG等。
+//                outputColumns.add(new Column(agg.toString(), DataType.INT));
+//            }
+//            Schema aggSchema = new Schema(outputColumns);
+//            // 将 havingClause 传递给 AggregatePlanNode
+//            plan = new AggregatePlanNode(plan, ast.groupByClause(), aggregates, aggSchema, ast.havingClause());
+//        }
+//        if (!ast.isSelectAll()&& !hasAggregate) {//若有聚合，投影已经在聚合节点中完成
+//            Schema inputSchemaForProject = plan.getOutputSchema();
+//
+//            List<Column> projectedColumns = new ArrayList<>();
+//            for (ExpressionNode expr : ast.selectList()) {
+//                if (expr instanceof IdentifierNode idNode) {
+//                    Column originalColumn = findColumnInSchema(inputSchemaForProject, idNode.getName());
+//                    projectedColumns.add(originalColumn);
+//                }
+//            }
+//            Schema projectedSchema = new Schema(projectedColumns);
+//            plan = new ProjectPlanNode(plan, projectedSchema);
+//        }
+//
+//        if (ast.orderByClause() != null) {
+//            plan = new SortPlanNode(plan, ast.orderByClause());
+//        }
+//        if (ast.limitClause() != null) {
+//            plan = new LimitPlanNode(plan, ast.limitClause().limit());
+//        }
+//
+//        return plan;
+//    }
 
     private PlanNode createDeletePlan(DeleteStatementNode ast) {
         TableInfo tableInfo = catalog.getTable(ast.tableName().getName());
