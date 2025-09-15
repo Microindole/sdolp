@@ -6,6 +6,7 @@ import org.csu.sdolp.common.model.Value;
 import org.csu.sdolp.compiler.parser.ast.expression.AggregateExpressionNode;
 import org.csu.sdolp.compiler.parser.ast.expression.IdentifierNode;
 import org.csu.sdolp.compiler.planner.plan.query.AggregatePlanNode;
+import org.csu.sdolp.engine.ExpressionEvaluator;
 import org.csu.sdolp.executor.TupleIterator;
 
 import java.io.IOException;
@@ -103,8 +104,20 @@ public class AggregateExecutor implements TupleIterator {
             }
             finalResults.add(new Tuple(resultValues));
         }
-
-        this.resultIterator = finalResults.iterator();
+        // 此处修改：在聚合完成后，应用 HAVING 子句进行过滤
+        if (plan.getHavingClause() != null) {
+            List<Tuple> filteredResults = new ArrayList<>();
+            for (Tuple t : finalResults) {
+                // 使用输出 Schema (plan.getOutputSchema()) 来评估 HAVING 表达式
+                if (ExpressionEvaluator.evaluate(plan.getHavingClause(), plan.getOutputSchema(), t)) {
+                    filteredResults.add(t);
+                }
+            }
+            this.resultIterator = filteredResults.iterator();
+        } else {
+            this.resultIterator = finalResults.iterator();
+        }
+//        this.resultIterator = finalResults.iterator();
         this.isInitialized = true;
     }
 

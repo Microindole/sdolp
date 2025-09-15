@@ -17,10 +17,7 @@ import org.csu.sdolp.compiler.parser.ast.dml.DeleteStatementNode;
 import org.csu.sdolp.compiler.parser.ast.dml.InsertStatementNode;
 import org.csu.sdolp.compiler.parser.ast.dml.SelectStatementNode;
 import org.csu.sdolp.compiler.parser.ast.dml.UpdateStatementNode;
-import org.csu.sdolp.compiler.parser.ast.expression.BinaryExpressionNode;
-import org.csu.sdolp.compiler.parser.ast.expression.ColumnDefinitionNode;
-import org.csu.sdolp.compiler.parser.ast.expression.IdentifierNode;
-import org.csu.sdolp.compiler.parser.ast.expression.LiteralNode;
+import org.csu.sdolp.compiler.parser.ast.expression.*;
 import org.csu.sdolp.compiler.parser.ast.misc.*;
 import org.csu.sdolp.compiler.planner.plan.*;
 import org.csu.sdolp.compiler.planner.plan.dcl.CreateUserPlanNode;
@@ -154,6 +151,16 @@ public class Planner {
                     case BOOLEAN:
                         values.add(new Value(tokenType == TokenType.TRUE));
                         break;
+                    case FLOAT: //
+                        values.add(new Value(Float.parseFloat(lexeme)));
+                        break;
+                    case DOUBLE: //
+                        values.add(new Value(Double.parseDouble(lexeme)));
+                        break;
+                    case CHAR: //
+                        // 使用可以指定类型的构造函数
+                        values.add(new Value(DataType.CHAR, lexeme));
+                        break;
                     default:
                         throw new IllegalStateException("Unsupported data type in planner for INSERT: " + expectedType);
                 }
@@ -210,8 +217,31 @@ public class Planner {
             PlanNode rightPlan = new SeqScanPlanNode(rightTableInfo);
             plan = new JoinPlanNode(plan, rightPlan, ast.joinCondition());
         }
+        // 集成 HAVING 子句
+        boolean hasAggregate = ast.selectList().stream()
+                .anyMatch(expr -> expr instanceof AggregateExpressionNode);
+        if (hasAggregate || (ast.groupByClause() != null && !ast.groupByClause().isEmpty())) {
+            List<AggregateExpressionNode> aggregates = ast.selectList().stream()
+                    .filter(AggregateExpressionNode.class::isInstance)
+                    .map(AggregateExpressionNode.class::cast)
+                    .collect(Collectors.toList());
 
-        if (!ast.isSelectAll()) {
+            // 构造输出 Schema
+            List<Column> outputColumns = new ArrayList<>();
+            if (ast.groupByClause() != null) {
+                for (IdentifierNode groupByCol : ast.groupByClause()) {
+                    outputColumns.add(findColumnInSchema(plan.getOutputSchema(), groupByCol.getName()));
+                }
+            }
+            for (AggregateExpressionNode agg : aggregates) {
+                // 这是一个简化。真实系统中，AVG可能是DECIMAL，COUNT是LONG等。
+                outputColumns.add(new Column(agg.toString(), DataType.INT));
+            }
+            Schema aggSchema = new Schema(outputColumns);
+            // 将 havingClause 传递给 AggregatePlanNode
+            plan = new AggregatePlanNode(plan, ast.groupByClause(), aggregates, aggSchema, ast.havingClause());
+        }
+        if (!ast.isSelectAll()&& !hasAggregate) {//若有聚合，投影已经在聚合节点中完成
             Schema inputSchemaForProject = plan.getOutputSchema();
 
             List<Column> projectedColumns = new ArrayList<>();

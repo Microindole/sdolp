@@ -38,12 +38,26 @@ public class Value {
         this.type = DataType.BOOLEAN;
         this.value = value;
     }
-    // ======(Phase 4 Bug Fix) ======
-    // 私有构造函数，用于特殊情况，如 AVG 的中间值
-    private Value(DataType type, Object value) {
+    public Value(Float value) {
+        this.type = DataType.FLOAT;
+        this.value = value;
+    }
+
+    public Value(Double value) {
+        this.type = DataType.DOUBLE;
+        this.value = value;
+    }
+    // Making this public to handle types like CHAR that share a Java type (String)
+    public Value(DataType type, Object value) {
         this.type = type;
         this.value = value;
     }
+    // ======(Phase 4 Bug Fix) ======
+    // 私有构造函数，用于特殊情况，如 AVG 的中间值
+//    private Value(DataType type, Object value) {
+//        this.type = type;
+//        this.value = value;
+//    }
     public DataType getType() {
         return type;
     }
@@ -63,6 +77,7 @@ public class Value {
                 out.writeInt((Integer) value);
                 break;
             case VARCHAR:
+            case CHAR://CHAR和VARCHAR使用相同的序列化方式
                 byte[] bytes = ((String) value).getBytes(StandardCharsets.UTF_8);
                 out.writeInt(bytes.length); // 先写入字符串长度
                 out.write(bytes);          // 再写入字符串内容
@@ -84,6 +99,12 @@ public class Value {
             case BOOLEAN:
                 out.writeBoolean((Boolean) value);
                 break;
+            case FLOAT: //
+                out.writeFloat((Float) value);
+                break;
+            case DOUBLE: //
+                out.writeDouble((Double) value);
+                break;
             default:
                 throw new UnsupportedOperationException("Unsupported data type for serialization: " + type);
         }
@@ -100,6 +121,7 @@ public class Value {
             case INT:
                 return new Value(buffer.getInt());
             case VARCHAR:
+            case CHAR:
                 int length = buffer.getInt();
                 byte[] bytes = new byte[length];
                 buffer.get(bytes);
@@ -116,6 +138,10 @@ public class Value {
                 return new Value(LocalDate.parse(new String(dateBytes, StandardCharsets.UTF_8)));
             case BOOLEAN:
                 return new Value(buffer.get() == 1);
+            case FLOAT: //
+                return new Value(buffer.getFloat());
+            case DOUBLE: //
+                return new Value(buffer.getDouble());
             default:
                 throw new UnsupportedOperationException("Unsupported data type for deserialization: " + type);
         }

@@ -246,11 +246,22 @@ public class Parser {
                 dataTypeToken.type() == TokenType.DECIMAL ||
                 dataTypeToken.type() == TokenType.DATE ||
                 dataTypeToken.type() == TokenType.BOOLEAN ||
+                dataTypeToken.type() == TokenType.FLOAT ||      //
+                dataTypeToken.type() == TokenType.DOUBLE ||     //
+                dataTypeToken.type() == TokenType.CHAR ||       //
                 dataTypeToken.type() == TokenType.IDENTIFIER) {
             advance();
         } else {
             throw new ParseException(peek(), "a valid data type (e.g., INT, VARCHAR, DECIMAL, etc.)");
         }
+        // --- START OF CRITICAL FIX ---
+        // After consuming the data type, we check for a parenthesis to handle lengths like (50).
+        // This logic was missing and caused the ParseException.
+        if (match(TokenType.LPAREN)) {
+            consume(TokenType.INTEGER_CONST, "Expected a length for " + dataTypeToken.lexeme() + ".");
+            consume(TokenType.RPAREN, "Expected ')' after " + dataTypeToken.lexeme() + " length.");
+        }
+        // --- END OF CRITICAL FIX ---
         IdentifierNode dataType = new IdentifierNode(dataTypeToken.lexeme());
         return new ColumnDefinitionNode(columnName, dataType);
     }
@@ -295,6 +306,11 @@ public class Parser {
                 groupByClause.add((IdentifierNode) groupByExpr);
             } while (match(TokenType.COMMA));
         }
+        // 解析 HAVING 子句
+        ExpressionNode havingClause = null;
+        if (match(TokenType.HAVING)) {
+            havingClause = parseExpression();
+        }
         OrderByClauseNode orderByClause = null;
         if (match(TokenType.ORDER)) {
             orderByClause = parseOrderByClause();
@@ -308,7 +324,7 @@ public class Parser {
             consume(TokenType.INTEGER_CONST, "integer value for LIMIT count");
         }
 
-        return new SelectStatementNode(selectList, fromTable, joinTable, joinCondition,whereClause, isSelectAll, groupByClause, orderByClause, limitClause);
+        return new SelectStatementNode(selectList, fromTable, joinTable, joinCondition,whereClause, isSelectAll, groupByClause,havingClause,orderByClause, limitClause);
     }
 
     private IdentifierNode parseTableName() {

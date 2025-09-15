@@ -45,6 +45,9 @@ public class Lexer {
         keywords.put("decimal", TokenType.DECIMAL);
         keywords.put("date", TokenType.DATE);
         keywords.put("boolean", TokenType.BOOLEAN);
+        keywords.put("float", TokenType.FLOAT);   //
+        keywords.put("double", TokenType.DOUBLE); //
+        keywords.put("char", TokenType.CHAR);     //
         keywords.put("true", TokenType.TRUE);
         keywords.put("false", TokenType.FALSE);
         keywords.put("order", TokenType.ORDER);
@@ -74,6 +77,7 @@ public class Lexer {
         keywords.put("identified", TokenType.IDENTIFIED);
         keywords.put("grant", TokenType.GRANT);
         keywords.put("to", TokenType.TO);
+        keywords.put("having", TokenType.HAVING); //
     }
 
     public Lexer(String input) {

@@ -6,5 +6,8 @@ public enum DataType {
     // 其他数据类型...
     DECIMAL,
     DATE,
-    BOOLEAN
+    BOOLEAN,
+    FLOAT,  //
+    DOUBLE, //
+    CHAR    //
 }

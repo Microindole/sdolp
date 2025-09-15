@@ -32,13 +32,15 @@ public enum TokenType {
     BOOLEAN,
     TRUE,
     FALSE,
-
+    FLOAT,      //
+    DOUBLE,     //
+    CHAR,       //
     // ====== 权限管理关键字 ======
     USER,       // "USER"
     IDENTIFIED, // "IDENTIFIED"
     GRANT,      // "GRANT"
     TO,         // "TO"
-
+    HAVING, //
     // ====== 查询子句关键字 ======
     ORDER,      // "ORDER"
     BY,         // "BY"
