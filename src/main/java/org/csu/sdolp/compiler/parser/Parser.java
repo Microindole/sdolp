@@ -246,6 +246,9 @@ public class Parser {
                 dataTypeToken.type() == TokenType.DECIMAL ||
                 dataTypeToken.type() == TokenType.DATE ||
                 dataTypeToken.type() == TokenType.BOOLEAN ||
+                dataTypeToken.type() == TokenType.FLOAT ||      //
+                dataTypeToken.type() == TokenType.DOUBLE ||     //
+                dataTypeToken.type() == TokenType.CHAR ||       //
                 dataTypeToken.type() == TokenType.IDENTIFIER) {
             advance();
         } else {

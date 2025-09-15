@@ -180,6 +180,12 @@ public class SemanticAnalyzer {
             // 允许将整数插入 DECIMAL 类型的列
             if (expectedType == DataType.DECIMAL && actualType == DataType.INT) {
                 // This is a valid cast, continue.
+            } else if (expectedType == DataType.FLOAT && (actualType == DataType.INT || actualType == DataType.DECIMAL)) {
+                // Allow inserting INT/DECIMAL into FLOAT
+            } else if (expectedType == DataType.DOUBLE && (actualType == DataType.INT || actualType == DataType.DECIMAL || actualType == DataType.FLOAT)) {
+                // Allow inserting INT/DECIMAL/FLOAT into DOUBLE
+            } else if (expectedType == DataType.CHAR && actualType == DataType.VARCHAR) {
+                // Allow inserting string literal into CHAR column
             } else if (expectedType != actualType) {
                 // 检查是否是合法的 DATE 字符串
                 if (expectedType == DataType.DATE && actualType == DataType.VARCHAR) {

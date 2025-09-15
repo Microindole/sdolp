@@ -32,7 +32,9 @@ public enum TokenType {
     BOOLEAN,
     TRUE,
     FALSE,
-
+    FLOAT,      // 
+    DOUBLE,     //
+    CHAR,       //
     // ====== 权限管理关键字 ======
     USER,       // "USER"
     IDENTIFIED, // "IDENTIFIED"

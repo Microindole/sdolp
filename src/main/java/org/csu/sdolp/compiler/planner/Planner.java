@@ -154,6 +154,16 @@ public class Planner {
                     case BOOLEAN:
                         values.add(new Value(tokenType == TokenType.TRUE));
                         break;
+                    case FLOAT: //
+                        values.add(new Value(Float.parseFloat(lexeme)));
+                        break;
+                    case DOUBLE: //
+                        values.add(new Value(Double.parseDouble(lexeme)));
+                        break;
+                    case CHAR: //
+                        // 使用可以指定类型的构造函数
+                        values.add(new Value(DataType.CHAR, lexeme));
+                        break;
                     default:
                         throw new IllegalStateException("Unsupported data type in planner for INSERT: " + expectedType);
                 }
