@@ -1,6 +1,8 @@
 package org.csu.sdolp.cli.client;
 
 import com.formdev.flatlaf.themes.FlatMacDarkLaf;
+import org.csu.sdolp.cli.tool.DataReader;
+import org.csu.sdolp.cli.tool.LogReader;
 import org.csu.sdolp.compiler.lexer.TokenType;
 import org.fife.ui.autocomplete.AutoCompletion;
 import org.fife.ui.autocomplete.BasicCompletion;
@@ -36,7 +38,7 @@ import java.util.List;
 import java.util.Vector;
 
 /**
- * 一个功能强大的、基于GUI的数据库交互式Shell客户端 (最终修复版)。
+ * 一个功能强大的、基于GUI的数据库交互式Shell客户端 (集成工具版)。
  */
 public class AdvancedShell extends JFrame {
 
@@ -170,6 +172,16 @@ public class AdvancedShell extends JFrame {
         JButton importButton = new JButton("导入SQL");
         importButton.addActionListener(e -> importSqlFile());
         toolBar.add(importButton);
+
+        // --- 新增：导出SQL和查看日志的按钮 ---
+        JButton exportButton = new JButton("💾 导出SQL");
+        exportButton.addActionListener(e -> exportDatabase());
+        toolBar.add(exportButton);
+
+        JButton logButton = new JButton("📜 查看日志");
+        logButton.addActionListener(e -> showLogReader());
+        toolBar.add(logButton);
+
 
         JButton clearButton = new JButton("清空");
         clearButton.addActionListener(e -> sqlEditor.setText(""));
@@ -323,9 +335,7 @@ public class AdvancedShell extends JFrame {
                 int executedCount = 0;
 
                 for (String statement : statements) {
-                    // --- 核心修复：在这里将多行语句压平为单行 ---
                     String singleLineStatement = statement.trim().replaceAll("\\s+", " ");
-
                     if (!singleLineStatement.isEmpty()) {
                         out.println(singleLineStatement + ";");
                         String response = in.readLine();
@@ -356,6 +366,65 @@ public class AdvancedShell extends JFrame {
             }
         };
         worker.execute();
+    }
+
+    // --- 新增：显示日志读取器窗口 ---
+    private void showLogReader() {
+        // LogReader本身就是一个JFrame，可以直接创建并显示
+        // 为了避免阻塞主GUI，也在一个新的线程中显示它
+        SwingUtilities.invokeLater(() -> {
+            LogReader logReader = new LogReader();
+            logReader.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE); // 关闭时不退出整个应用
+            logReader.setVisible(true);
+        });
+    }
+
+    // --- 新增：导出数据库为SQL文件 ---
+    private void exportDatabase() {
+        String currentDb = "default"; // 假设我们总是导出当前连接的数据库
+        // 注意：这里需要一种方式来获取当前 'USE' 的数据库名，我们暂时硬编码
+
+        // DataReader的逻辑需要被重构为非静态方法或一个可实例化的类
+        // 这里我们暂时用一个简化的方式，直接调用其逻辑
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("请选择SQL文件的保存位置");
+        chooser.setSelectedFile(new File(currentDb + "_dump.sql"));
+        chooser.setFileFilter(new FileNameExtensionFilter("SQL File", "sql"));
+
+        if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+            File file = chooser.getSelectedFile();
+            statusBar.setText("正在导出数据库到 " + file.getName() + "...");
+
+            // 在后台线程中执行导出
+            SwingWorker<Void, Void> worker = new SwingWorker<>() {
+                @Override
+                protected Void doInBackground() throws Exception {
+                    // 这里的逻辑直接从DataReader复制和改造而来
+                    // 需要一个独立的数据库连接来执行此操作
+                    DataReader.exportDatabaseToFile(currentDb, file);
+                    return null;
+                }
+
+                @Override
+                protected void done() {
+                    try {
+                        get();
+                        statusBar.setText("数据库导出成功！");
+                        JOptionPane.showMessageDialog(AdvancedShell.this,
+                                "数据库已成功导出到:\n" + file.getAbsolutePath(),
+                                "导出成功",
+                                JOptionPane.INFORMATION_MESSAGE);
+                    } catch (Exception e) {
+                        statusBar.setText("数据库导出失败！");
+                        JOptionPane.showMessageDialog(AdvancedShell.this,
+                                "导出失败: " + e.getMessage(),
+                                "导出错误",
+                                JOptionPane.ERROR_MESSAGE);
+                    }
+                }
+            };
+            worker.execute();
+        }
     }
 
     private void toggleConnection() { if (socket == null || socket.isClosed()) connect(); else disconnect(); }
