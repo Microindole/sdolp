@@ -1,6 +1,5 @@
 package org.csu.sdolp.cli.client;
 
-import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.themes.FlatMacDarkLaf;
 import org.csu.sdolp.compiler.lexer.TokenType;
 import org.fife.ui.autocomplete.AutoCompletion;
@@ -14,6 +13,7 @@ import org.fife.ui.rtextarea.RTextScrollPane;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.JTableHeader;
@@ -23,10 +23,12 @@ import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseWheelEvent;
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
@@ -34,7 +36,7 @@ import java.util.List;
 import java.util.Vector;
 
 /**
- * 一个功能强大的、基于GUI的数据库交互式Shell客户端 (最终版 - One Dark Pro 主题)。
+ * 一个功能强大的、基于GUI的数据库交互式Shell客户端 (最终修复版)。
  */
 public class AdvancedShell extends JFrame {
 
@@ -74,8 +76,6 @@ public class AdvancedShell extends JFrame {
         portField = new JTextField("8848", 5);
         usernameField = new JTextField("root", 10);
         connectButton = new JButton("连接");
-        // FlatLaf Extras
-        connectButton.setIcon(new FlatSVGIcon("icons/plug.svg"));
 
         sqlEditor = new RSyntaxTextArea(20, 60);
         sqlEditor.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_SQL);
@@ -167,6 +167,10 @@ public class AdvancedShell extends JFrame {
         executeButton.addActionListener(e -> executeSql());
         toolBar.add(executeButton);
 
+        JButton importButton = new JButton("导入SQL");
+        importButton.addActionListener(e -> importSqlFile());
+        toolBar.add(importButton);
+
         JButton clearButton = new JButton("清空");
         clearButton.addActionListener(e -> sqlEditor.setText(""));
         toolBar.add(clearButton);
@@ -253,16 +257,13 @@ public class AdvancedShell extends JFrame {
     }
 
     private void updateResultTable(String serverResponse) {
-        // --- 核心BUG修复：每次都创建全新的、不可编辑的TableModel ---
         DefaultTableModel model = new DefaultTableModel() {
-            @Override public boolean isCellEditable(int row, int column) {
-                return false;
-            }
+            @Override public boolean isCellEditable(int row, int column) { return false; }
         };
 
         String[] lines = serverResponse.replace("<br>", "\n").split("\n");
         if (lines.length < 4 || !lines[0].startsWith("+--")) {
-            resultTable.setModel(model); // 设置一个空模型以清空视图
+            resultTable.setModel(model);
             return;
         }
 
@@ -281,7 +282,7 @@ public class AdvancedShell extends JFrame {
                 }
             }
 
-            resultTable.setModel(model); // 将构建好的新模型应用到JTable
+            resultTable.setModel(model);
             resultTable.setRowSorter(new TableRowSorter<>(model));
             resultTabbedPane.setSelectedIndex(0);
         } catch (Exception e) {
@@ -290,14 +291,79 @@ public class AdvancedShell extends JFrame {
         }
     }
 
-    // ... 其他网络和逻辑方法保持不变 ...
+    private void importSqlFile() {
+        if (socket == null || socket.isClosed()) {
+            JOptionPane.showMessageDialog(this, "请先连接到数据库。", "错误", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("请选择要导入的 SQL 文件");
+        FileNameExtensionFilter filter = new FileNameExtensionFilter("SQL Scripts (*.sql)", "sql");
+        chooser.setFileFilter(filter);
+
+        int returnValue = chooser.showOpenDialog(this);
+        if (returnValue == JFileChooser.APPROVE_OPTION) {
+            File sqlFile = chooser.getSelectedFile();
+            executeSqlScript(sqlFile);
+        }
+    }
+
+    private void executeSqlScript(File sqlFile) {
+        statusBar.setText("正在导入SQL脚本: " + sqlFile.getName() + "...");
+        resultTabbedPane.setSelectedIndex(1);
+        appendToConsole("--- 开始执行脚本: " + sqlFile.getName() + " ---");
+
+        SwingWorker<Integer, String> worker = new SwingWorker<>() {
+            @Override
+            protected Integer doInBackground() throws Exception {
+                String content = Files.readString(sqlFile.toPath());
+                content = content.replaceAll("(?m)^--.*$", "");
+                String[] statements = content.split(";");
+                int executedCount = 0;
+
+                for (String statement : statements) {
+                    // --- 核心修复：在这里将多行语句压平为单行 ---
+                    String singleLineStatement = statement.trim().replaceAll("\\s+", " ");
+
+                    if (!singleLineStatement.isEmpty()) {
+                        out.println(singleLineStatement + ";");
+                        String response = in.readLine();
+                        publish(">> " + singleLineStatement + "\n" + response.replace("<br>", "\n"));
+                        executedCount++;
+                    }
+                }
+                return executedCount;
+            }
+
+            @Override
+            protected void process(List<String> chunks) {
+                for(String msg : chunks) {
+                    appendToConsole(msg);
+                }
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    int count = get();
+                    appendToConsole("--- 脚本执行完毕，共执行 " + count + " 条语句 ---");
+                    statusBar.setText("脚本导入成功！");
+                } catch (Exception e) {
+                    appendToConsole("--- 脚本执行出错: " + e.getMessage() + " ---");
+                    statusBar.setText("脚本导入失败！");
+                }
+            }
+        };
+        worker.execute();
+    }
+
     private void toggleConnection() { if (socket == null || socket.isClosed()) connect(); else disconnect(); }
     private void connect() { String host = (String) serverComboBox.getSelectedItem(); int port; try { port = Integer.parseInt(portField.getText()); } catch (NumberFormatException e) { JOptionPane.showMessageDialog(this, "端口号必须是数字。", "连接错误", JOptionPane.ERROR_MESSAGE); return; } String username = usernameField.getText(); statusBar.setText("正在连接到 " + host + ":" + port + "..."); SwingWorker<Void, String> worker = new SwingWorker<>() { @Override protected Void doInBackground() throws Exception { socket = new Socket(host, port); out = new PrintWriter(socket.getOutputStream(), true); in = new BufferedReader(new InputStreamReader(socket.getInputStream())); publish("Server: " + in.readLine()); out.println(username); publish("Server: " + in.readLine()); return null; } @Override protected void process(List<String> chunks) { for (String msg : chunks) appendToConsole(msg); } @Override protected void done() { try { get(); connectButton.setText("断开连接"); statusBar.setText("已连接到 " + host + ":" + port + " | 用户: " + username); } catch (Exception e) { JOptionPane.showMessageDialog(AdvancedShell.this, "连接失败: " + e.getMessage(), "连接错误", JOptionPane.ERROR_MESSAGE); statusBar.setText("连接失败"); disconnect(); } } }; worker.execute(); }
     private void disconnect() { try { if (socket != null) socket.close(); } catch (Exception e) { /* ignore */ } socket = null; connectButton.setText("连接"); statusBar.setText("未连接"); appendToConsole("连接已断开。"); }
     private void executeSql() { String sql = sqlEditor.getSelectedText() != null && !sqlEditor.getSelectedText().isEmpty() ? sqlEditor.getSelectedText() : sqlEditor.getText(); if (sql.trim().isEmpty()) return; if (socket == null || socket.isClosed()) { JOptionPane.showMessageDialog(this, "请先连接到数据库。", "错误", JOptionPane.ERROR_MESSAGE); return; } if (!commandHistory.contains(sql)) commandHistory.add(sql); historyIndex = commandHistory.size(); long startTime = System.currentTimeMillis(); statusBar.setText("正在执行查询..."); SwingWorker<String, Void> worker = new SwingWorker<>() { @Override protected String doInBackground() throws Exception { out.println(sql); return in.readLine(); } @Override protected void done() { try { String response = get(); long duration = System.currentTimeMillis() - startTime; if (response != null) { appendToConsole(">> " + sql.replace("\n", " ") + "\n" + response.replace("<br>", "\n")); updateResultTable(response); statusBar.setText("查询完成 | 耗时: " + duration + "ms"); } else { statusBar.setText("与服务器断开连接。"); disconnect(); } } catch (Exception e) { statusBar.setText("执行错误: " + e.getMessage()); appendToConsole("错误: " + e.getMessage()); } } }; worker.execute(); }
     private void appendToConsole(String message) { consoleTextArea.append(message + "\n"); consoleTextArea.setCaretPosition(consoleTextArea.getDocument().getLength()); }
 
-    // --- 内部类：主题感知的表格单元格渲染器 ---
     private static class ThemedTableCellRenderer extends DefaultTableCellRenderer {
         public ThemedTableCellRenderer() { setBorder(new EmptyBorder(0, 10, 0, 10)); }
         @Override public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
@@ -308,7 +374,6 @@ public class AdvancedShell extends JFrame {
             return this;
         }
     }
-    // --- 内部类：主题感知的表格头部渲染器 ---
     private static class ThemedHeaderRenderer extends DefaultTableCellRenderer {
         public ThemedHeaderRenderer() { setOpaque(true); setBorder(UIManager.getBorder("TableHeader.cellBorder")); setHorizontalAlignment(JLabel.CENTER); }
         @Override public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
@@ -319,7 +384,6 @@ public class AdvancedShell extends JFrame {
     }
 
     public static void main(String[] args) {
-        // --- 核心修改：启用官方 "One Dark" 主题 ---
         SwingUtilities.invokeLater(() -> {
             FlatMacDarkLaf.setup();
             new AdvancedShell().setVisible(true);
