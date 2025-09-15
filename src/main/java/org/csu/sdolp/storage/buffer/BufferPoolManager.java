@@ -4,6 +4,7 @@ import lombok.Getter;
 import org.csu.sdolp.storage.buffer.replacement.BufferPoolReplacer;
 import org.csu.sdolp.storage.buffer.replacement.FIFOReplacer;
 import org.csu.sdolp.storage.buffer.replacement.LRUReplacer;
+import org.csu.sdolp.storage.buffer.replacement.MLFQReplacer;
 import org.csu.sdolp.storage.disk.DiskManager;
 import org.csu.sdolp.storage.page.Page;
 import org.csu.sdolp.storage.page.PageId;
@@ -18,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class BufferPoolManager {
     private final DiskManager diskManager;
     private final int poolSize;
+    @Getter
     private final Map<PageId, Page> pageTable;
     private final BufferPoolReplacer replacer;
 
@@ -35,6 +37,8 @@ public class BufferPoolManager {
             this.replacer = new LRUReplacer();
         } else if ("FIFO".equalsIgnoreCase(strategy)) {
             this.replacer = new FIFOReplacer();
+        } else if ("MLFQ".equalsIgnoreCase(strategy)) {
+            this.replacer = new MLFQReplacer();
         } else {
             throw new IllegalArgumentException("Unsupported replacement strategy: " + strategy);
         }

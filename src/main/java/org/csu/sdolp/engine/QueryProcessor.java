@@ -66,7 +66,7 @@ public class QueryProcessor {
             this.diskManager = new DiskManager(DatabaseManager.getDbFilePath(dbName));
             diskManager.open();
             final int bufferPoolSize = 100;
-            this.bufferPoolManager = new BufferPoolManager(bufferPoolSize, diskManager, "LRU");
+            this.bufferPoolManager = new BufferPoolManager(bufferPoolSize, diskManager, "MLFQ");
             this.catalog = new Catalog(bufferPoolManager);
             this.planner = new Planner(catalog);
             this.logManager = new LogManager(DatabaseManager.getDbFilePath(dbName) + ".log");
