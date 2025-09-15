@@ -1,6 +1,7 @@
 package org.csu.sdolp.compiler.planner.plan.query;
 
 import org.csu.sdolp.common.model.Schema;
+import org.csu.sdolp.compiler.parser.ast.ExpressionNode;
 import org.csu.sdolp.compiler.parser.ast.expression.AggregateExpressionNode;
 import org.csu.sdolp.compiler.parser.ast.expression.IdentifierNode;
 import org.csu.sdolp.compiler.planner.plan.PlanNode;
@@ -14,13 +15,14 @@ public class AggregatePlanNode extends PlanNode {
     private final PlanNode child;
     private final List<IdentifierNode> groupBys;
     private final List<AggregateExpressionNode> aggregates;
-
+    private final ExpressionNode havingClause; //
     public AggregatePlanNode(PlanNode child, List<IdentifierNode> groupBys,
-                             List<AggregateExpressionNode> aggregates, Schema outputSchema) {
+                             List<AggregateExpressionNode> aggregates, Schema outputSchema,ExpressionNode havingClause) {
         super(outputSchema);
         this.child = child;
         this.groupBys = groupBys;
         this.aggregates = aggregates;
+        this.havingClause = havingClause;
     }
 
     public PlanNode getChild() {
@@ -33,5 +35,9 @@ public class AggregatePlanNode extends PlanNode {
 
     public List<AggregateExpressionNode> getAggregates() {
         return aggregates;
+    }
+    //
+    public ExpressionNode getHavingClause() {
+        return havingClause;
     }
 }

@@ -5,6 +5,7 @@ import org.csu.sdolp.common.model.Tuple;
 import org.csu.sdolp.common.model.Value;
 import org.csu.sdolp.compiler.parser.ast.expression.BinaryExpressionNode;
 import org.csu.sdolp.compiler.parser.ast.ExpressionNode;
+import org.csu.sdolp.compiler.parser.ast.expression.AggregateExpressionNode;
 import org.csu.sdolp.compiler.parser.ast.expression.IdentifierNode;
 import org.csu.sdolp.compiler.parser.ast.expression.LiteralNode;
 
@@ -23,6 +24,32 @@ public class ExpressionEvaluator {
      */
     public static boolean evaluate(ExpressionNode expression, Schema schema, Tuple tuple) {
         if (expression instanceof BinaryExpressionNode node) {
+            // 此处修改: 新增逻辑块，用于处理 HAVING 子句中的聚合函数
+            // Case 1: 对应 HAVING AVG(salary) > 70000
+            if (node.left() instanceof AggregateExpressionNode leftAgg && node.right() instanceof LiteralNode rightLiteral) {
+                // 在聚合后的Schema中，聚合函数本身（如"AVG(salary)"）就是列名
+                String aggColumnName = leftAgg.toString();
+                int colIndex = schema.getColumnIndex(aggColumnName);
+                if (colIndex == -1) {
+                    throw new IllegalStateException("Aggregate column '" + aggColumnName + "' not found in post-aggregation schema.");
+                }
+                Value leftValue = tuple.getValues().get(colIndex);
+                Value rightValue = getLiteralValue(rightLiteral);
+                return compareValues(leftValue, rightValue, node.operator().type().name());
+            }
+            // Case 2: 对应 HAVING 70000 < AVG(salary)
+            else if (node.left() instanceof LiteralNode leftLiteral && node.right() instanceof AggregateExpressionNode rightAgg) {
+                String aggColumnName = rightAgg.toString();
+                int colIndex = schema.getColumnIndex(aggColumnName);
+                if (colIndex == -1) {
+                    throw new IllegalStateException("Aggregate column '" + aggColumnName + "' not found in post-aggregation schema.");
+                }
+                Value leftValue = getLiteralValue(leftLiteral);
+                Value rightValue = tuple.getValues().get(colIndex);
+                return compareValues(leftValue, rightValue, node.operator().type().name());
+            }
+            // 此处修改结束
+            //
             if (node.left() instanceof IdentifierNode leftCol && node.right() instanceof IdentifierNode rightCol) {
                 Value leftValue = getColumnValue(tuple, schema, leftCol);
                 Value rightValue = getColumnValue(tuple, schema, rightCol);
@@ -37,7 +64,8 @@ public class ExpressionEvaluator {
 
             throw new UnsupportedOperationException("Expression format not supported. Must be 'column op literal' or 'column1 op column2'.");
         }
-        throw new UnsupportedOperationException("Unsupported expression type in WHERE or ON clause.");
+        // 此处修改: 更新异常信息
+        throw new UnsupportedOperationException("Unsupported expression type in WHERE or HAVING clause: " + expression.getClass().getSimpleName());
     }
 
     private static Value getColumnValue(Tuple tuple, Schema schema, IdentifierNode columnNode) {
@@ -49,11 +77,14 @@ public class ExpressionEvaluator {
         }
         throw new IllegalStateException("Column '" + columnName + "' not found in tuple schema. This should have been caught during semantic analysis.");
     }
+
     private static Value getLiteralValue(LiteralNode literalNode) {
         String lexeme = literalNode.literal().lexeme();
         return switch (literalNode.literal().type()) {
             case INTEGER_CONST -> new Value(Integer.parseInt(lexeme));
             case STRING_CONST -> new Value(lexeme);
+            // 增加对DECIMAL_CONST的支持，以处理浮点数字面量
+            case DECIMAL_CONST -> new Value(Double.parseDouble(lexeme));
             default -> throw new IllegalStateException("Unsupported literal type in expression.");
         };
     }
@@ -61,6 +92,21 @@ public class ExpressionEvaluator {
         if (val1 == null || val1.getValue() == null || val2 == null || val2.getValue() == null) {
             // SQL 中，任何与 NULL 的比较结果都是 UNKNOWN，在这里我们将其视为 false
             return false;
+        }
+        // 类型转换以支持更广泛的比较
+        // 允许整数和浮点数等数字类型之间进行比较
+        if (val1.getValue() instanceof Number && val2.getValue() instanceof Number) {
+            double v1 = ((Number) val1.getValue()).doubleValue();
+            double v2 = ((Number) val2.getValue()).doubleValue();
+            return switch (operator) {
+                case "EQUAL" -> v1 == v2;
+                case "NOT_EQUAL" -> v1 != v2;
+                case "GREATER" -> v1 > v2;
+                case "GREATER_EQUAL" -> v1 >= v2;
+                case "LESS" -> v1 < v2;
+                case "LESS_EQUAL" -> v1 <= v2;
+                default -> false;
+            };
         }
         if (val1.getType() != val2.getType()) {
             return false;

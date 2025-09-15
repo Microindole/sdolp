@@ -77,6 +77,7 @@ public class Lexer {
         keywords.put("identified", TokenType.IDENTIFIED);
         keywords.put("grant", TokenType.GRANT);
         keywords.put("to", TokenType.TO);
+        keywords.put("having", TokenType.HAVING); //
     }
 
     public Lexer(String input) {

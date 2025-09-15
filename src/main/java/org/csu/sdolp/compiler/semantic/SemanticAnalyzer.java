@@ -25,6 +25,7 @@ import java.io.IOException;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -240,7 +241,8 @@ public class SemanticAnalyzer {
             // 如果是 SELECT * 但有 GROUP BY，这是不合法的 (标准SQL)
             throw new SemanticException("SELECT * is not allowed with GROUP BY clause.");
         }
-
+        // 集成 HAVING 子句的分析
+        analyzeSelectProjectAndGroupBy(node, leftTableInfo, rightTableInfo);
         // 4. 检查 WHERE 子句
         if (node.whereClause() != null) {
             // **【修正点】** 使用能处理两个表的 analyzeWhereOrJoinExpression 方法
@@ -253,7 +255,67 @@ public class SemanticAnalyzer {
             checkColumnExistsInJoinedTables(leftTableInfo, rightTableInfo, node.orderByClause().column());
         }
     }
+    // 辅助方法来处理 SELECT, GROUP BY, HAVING 的复杂逻辑
+    private void analyzeSelectProjectAndGroupBy(SelectStatementNode node, TableInfo fromTable, TableInfo joinTable) {
+        boolean hasAggregate = node.selectList().stream().anyMatch(e -> e instanceof AggregateExpressionNode);
+        List<IdentifierNode> groupByCols = node.groupByClause();
 
+        // 检查 GROUP BY 的合法性
+        if (groupByCols != null && !groupByCols.isEmpty()) {
+            for (IdentifierNode col : groupByCols) {
+                checkColumnExistsInJoinedTables(fromTable, joinTable, col);
+            }
+        }
+
+        // 检查 SELECT 列表的合法性
+        if (!node.isSelectAll()) {
+            for (ExpressionNode expr : node.selectList()) {
+                // 如果有 GROUP BY 或聚合函数，那么 SELECT 列表中的普通列必须是 GROUP BY 的一部分
+                if ((hasAggregate || (groupByCols != null && !groupByCols.isEmpty())) && expr instanceof IdentifierNode idNode) {
+                    boolean isInGroupBy = groupByCols != null && groupByCols.stream()
+                            .anyMatch(gbCol -> gbCol.getName().equalsIgnoreCase(idNode.getName()));
+                    if (!isInGroupBy) {
+                        throw new SemanticException("Column '" + idNode.getFullName() + "' must appear in the GROUP BY clause or be used in an aggregate function.");
+                    }
+                } else if (expr instanceof IdentifierNode idNode) {
+                    checkColumnExistsInJoinedTables(fromTable, joinTable, idNode);
+                } else if (expr instanceof AggregateExpressionNode aggNode) {
+                    // 检查聚合函数的参数列是否存在
+                    if (aggNode.argument() instanceof IdentifierNode argId) {
+                        checkColumnExistsInJoinedTables(fromTable, joinTable, argId);
+                    }
+                }
+            }
+        }
+
+        // 此处修改：分析 HAVING 子句
+        if (node.havingClause() != null) {
+            if (groupByCols == null || groupByCols.isEmpty()) {
+                throw new SemanticException("HAVING clause requires a GROUP BY clause.");
+            }
+            analyzeHavingClause(node.havingClause(), fromTable, joinTable, groupByCols);
+        }
+    }
+
+    // 新增方法，用于分析 HAVING 子句
+    private void analyzeHavingClause(ExpressionNode havingNode, TableInfo fromTable, TableInfo joinTable, List<IdentifierNode> groupByCols) {
+        if (havingNode instanceof BinaryExpressionNode binExpr) {
+            analyzeHavingClause(binExpr.left(), fromTable, joinTable, groupByCols);
+            analyzeHavingClause(binExpr.right(), fromTable, joinTable, groupByCols);
+        } else if (havingNode instanceof IdentifierNode idNode) {
+            boolean isInGroupBy = groupByCols.stream()
+                    .anyMatch(gbCol -> gbCol.getName().equalsIgnoreCase(idNode.getName()));
+            if (!isInGroupBy) {
+                throw new SemanticException("Column '" + idNode.getFullName() + "' in HAVING clause must be in the GROUP BY list.");
+            }
+        } else if (havingNode instanceof AggregateExpressionNode aggNode) {
+            if (aggNode.argument() instanceof IdentifierNode argId) {
+                checkColumnExistsInJoinedTables(fromTable, joinTable, argId);
+            }
+        } else if (!(havingNode instanceof LiteralNode)) {
+            throw new SemanticException("Unsupported expression in HAVING clause.");
+        }
+    }
 
     private void analyzeDelete(DeleteStatementNode node,Session session) {
         String tableName = node.tableName().getName();
