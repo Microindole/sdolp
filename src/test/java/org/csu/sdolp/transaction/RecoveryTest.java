@@ -1,4 +1,4 @@
-package org.csu.sdolp;
+package org.csu.sdolp.transaction;
 
 import org.csu.sdolp.catalog.Catalog;
 import org.csu.sdolp.cli.server.Session;
@@ -8,7 +8,6 @@ import org.csu.sdolp.compiler.parser.ast.StatementNode;
 import org.csu.sdolp.compiler.planner.plan.PlanNode;
 import org.csu.sdolp.compiler.semantic.SemanticAnalyzer;
 import org.csu.sdolp.engine.QueryProcessor;
-import org.csu.sdolp.transaction.Transaction;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

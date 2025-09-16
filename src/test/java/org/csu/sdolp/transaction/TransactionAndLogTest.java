@@ -1,4 +1,4 @@
-package org.csu.sdolp;
+package org.csu.sdolp.transaction;
 
 import org.csu.sdolp.catalog.Catalog;
 import org.csu.sdolp.catalog.TableInfo;
@@ -6,9 +6,6 @@ import org.csu.sdolp.common.model.*;
 import org.csu.sdolp.executor.TableHeap;
 import org.csu.sdolp.storage.buffer.BufferPoolManager;
 import org.csu.sdolp.storage.disk.DiskManager;
-import org.csu.sdolp.transaction.LockManager;
-import org.csu.sdolp.transaction.Transaction;
-import org.csu.sdolp.transaction.TransactionManager;
 import org.csu.sdolp.transaction.log.LogManager;
 import org.csu.sdolp.transaction.log.LogRecord;
 import org.junit.jupiter.api.AfterEach;

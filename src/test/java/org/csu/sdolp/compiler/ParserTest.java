@@ -1,4 +1,4 @@
-package org.csu.sdolp;
+package org.csu.sdolp.compiler;
 
 import org.csu.sdolp.common.exception.ParseException;
 import org.csu.sdolp.compiler.lexer.Lexer;

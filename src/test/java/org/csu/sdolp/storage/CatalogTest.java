@@ -1,4 +1,4 @@
-package org.csu.sdolp;
+package org.csu.sdolp.storage;
 
 import org.csu.sdolp.catalog.Catalog;
 import org.csu.sdolp.catalog.TableInfo;
