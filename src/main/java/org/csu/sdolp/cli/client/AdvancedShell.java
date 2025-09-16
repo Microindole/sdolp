@@ -424,7 +424,90 @@ public class AdvancedShell extends JFrame {
     private void toggleConnection() { if (socket == null || socket.isClosed()) connect(); else disconnect(); }
     private void connect() { String host = (String) serverComboBox.getSelectedItem(); int port; try { port = Integer.parseInt(portField.getText()); } catch (NumberFormatException e) { JOptionPane.showMessageDialog(this, "端口号必须是数字。", "连接错误", JOptionPane.ERROR_MESSAGE); return; } String username = usernameField.getText(); statusBar.setText("正在连接到 " + host + ":" + port + "..."); SwingWorker<Void, String> worker = new SwingWorker<>() { @Override protected Void doInBackground() throws Exception { socket = new Socket(host, port); out = new PrintWriter(socket.getOutputStream(), true); in = new BufferedReader(new InputStreamReader(socket.getInputStream())); publish("Server: " + in.readLine()); out.println(username); publish("Server: " + in.readLine()); return null; } @Override protected void process(List<String> chunks) { for (String msg : chunks) appendToConsole(msg); } @Override protected void done() { try { get(); connectButton.setText("断开连接"); statusBar.setText("已连接到 " + host + ":" + port + " | 用户: " + username); } catch (Exception e) { JOptionPane.showMessageDialog(AdvancedShell.this, "连接失败: " + e.getMessage(), "连接错误", JOptionPane.ERROR_MESSAGE); statusBar.setText("连接失败"); disconnect(); } } }; worker.execute(); }
     private void disconnect() { try { if (socket != null) socket.close(); } catch (Exception e) { /* ignore */ } socket = null; connectButton.setText("连接"); statusBar.setText("未连接"); appendToConsole("连接已断开。"); }
-    private void executeSql() { String sql = sqlEditor.getSelectedText() != null && !sqlEditor.getSelectedText().isEmpty() ? sqlEditor.getSelectedText() : sqlEditor.getText(); if (sql.trim().isEmpty()) return; if (socket == null || socket.isClosed()) { JOptionPane.showMessageDialog(this, "请先连接到数据库。", "错误", JOptionPane.ERROR_MESSAGE); return; } if (!commandHistory.contains(sql)) commandHistory.add(sql); historyIndex = commandHistory.size(); long startTime = System.currentTimeMillis(); statusBar.setText("正在执行查询..."); SwingWorker<String, Void> worker = new SwingWorker<>() { @Override protected String doInBackground() throws Exception { out.println(sql); return in.readLine(); } @Override protected void done() { try { String response = get(); long duration = System.currentTimeMillis() - startTime; if (response != null) { appendToConsole(">> " + sql.replace("\n", " ") + "\n" + response.replace("<br>", "\n")); updateResultTable(response); statusBar.setText("查询完成 | 耗时: " + duration + "ms"); } else { statusBar.setText("与服务器断开连接。"); disconnect(); } } catch (Exception e) { statusBar.setText("执行错误: " + e.getMessage()); appendToConsole("错误: " + e.getMessage()); } } }; worker.execute(); }
+    private void executeSql() {
+        // 优先执行选中的文本，否则执行全部文本
+        String sqlText = sqlEditor.getSelectedText() != null && !sqlEditor.getSelectedText().isEmpty() ? sqlEditor.getSelectedText() : sqlEditor.getText();
+        if (sqlText.trim().isEmpty()) {
+            return;
+        }
+        if (socket == null || socket.isClosed()) {
+            JOptionPane.showMessageDialog(this, "请先连接到数据库。", "错误", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        // 将SQL文本添加到历史记录
+        if (!commandHistory.contains(sqlText)) {
+            commandHistory.add(sqlText);
+        }
+        historyIndex = commandHistory.size();
+
+        long startTime = System.currentTimeMillis();
+        statusBar.setText("正在执行查询...");
+
+        SwingWorker<Void, String> worker = new SwingWorker<>() {
+            @Override
+            protected Void doInBackground() throws Exception {
+                // 1. 按分号分割所有SQL命令
+                String[] sqlStatements = sqlText.split(";");
+
+                for (String sql : sqlStatements) {
+                    String singleSql = sql.trim();
+                    if (singleSql.isEmpty()) {
+                        continue;
+                    }
+
+                    // 2.【核心修复】将换行符替换为空格，确保命令在逻辑上是一行
+                    String singleLineSql = singleSql.replaceAll("\\s+", " ");
+
+                    // 3. 逐条发送SQL语句到服务器
+                    out.println(singleLineSql + ";");
+                    String response = in.readLine(); // 每发送一条，就等待一次响应
+
+                    // 4. 将每次的请求和响应都发布，以便在控制台更新
+                    publish(">> " + singleLineSql + "\n" + (response != null ? response.replace("<br>", "\n") : "与服务器断开连接。"));
+
+                    // 将最后一条命令的响应也保存下来，用于可能更新表格视图
+                    if (response != null) {
+                        final String lastResponse = response;
+                        SwingUtilities.invokeLater(() -> updateResultTable(lastResponse));
+                    }
+
+
+                    if (response == null) {
+                        // 如果中途连接断开，则停止执行
+                        publish("与服务器的连接已断开。");
+                        break;
+                    }
+                }
+                return null;
+            }
+
+            @Override
+            protected void process(List<String> chunks) {
+                // 实时更新控制台视图
+                for (String msg : chunks) {
+                    appendToConsole(msg);
+                }
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    get(); // 调用 get() 来捕获 doInBackground 中可能抛出的异常
+                    long duration = System.currentTimeMillis() - startTime;
+                    statusBar.setText("查询完成 | 耗时: " + duration + "ms");
+                    resultTabbedPane.setSelectedIndex(1); // 执行后，默认切换到信息更全的控制台视图
+
+                } catch (Exception e) {
+                    statusBar.setText("执行错误: " + e.getMessage());
+                    appendToConsole("错误: " + e.getMessage());
+                    e.printStackTrace();
+                }
+            }
+        };
+        worker.execute();
+    }
+
     private void appendToConsole(String message) { consoleTextArea.append(message + "\n"); consoleTextArea.setCaretPosition(consoleTextArea.getDocument().getLength()); }
 
     private static class ThemedTableCellRenderer extends DefaultTableCellRenderer {
