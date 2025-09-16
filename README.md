@@ -115,14 +115,14 @@ mvn clean install
 
 **点击下方链接查看每个模块的详细设计文档：**
 
-- [**📄 1. SQL 编译器 (Compiler)**](https://www.google.com/search?q=./docs/compiler_design.md)
-- [**📄 2. 执行引擎 (Execution Engine)**](https://www.google.com/search?q=./docs/execution_engine_design.md)
-- [**📄 3. 存储引擎 (Storage Engine)**](https://www.google.com/search?q=./docs/storage_engine_design.md)
-- [**📄 4. 事务与并发控制 (Transaction & Concurrency)**](https://www.google.com/search?q=./docs/transaction_design.md)
-- [**📄 5. 元数据管理 (Catalog)**](https://www.google.com/search?q=./docs/catalog_design.md)
-- [**📄 6. 网络服务与客户端 (Networking & Client)**](https://www.google.com/search?q=./docs/networking_client_design.md)
-- [**📄 7. 通用模型与工具 (Common & Utilities)**](https://www.google.com/search?q=./docs/common_utils_design.md)
-- [**📄 8. 全面集成测试指南 (Comprehensive Test Guide)**](https://www.google.com/search?q=./docs/Test.md)
+- [**📄 1. SQL 编译器 (Compiler)**](./docs/Compiler.md)
+- [**📄 2. 执行引擎 (Execution Engine)**](./docs/Common&Utilities.md)
+- [**📄 3. 存储引擎 (Storage Engine)**](./docs/StorageEngine)
+- [**📄 4. 事务与并发控制 (Transaction & Concurrency)**](./docs/Transaction&Concurrency.md)
+- [**📄 5. 元数据管理 (Catalog)**](./docs/Catalog.md)
+- [**📄 6. 网络服务与客户端 (Networking & Client)**](./docs/Networking&Client.md)
+- [**📄 7. 通用模型与工具 (Common & Utilities)**](./docs/Common&Utilities.md)
+- [**📄 8. 全面集成测试指南 (Comprehensive Test Guide)**](./docs/Test.md)
 
 ## 📁 项目目录结构
 
@@ -197,6 +197,8 @@ src/main/java/org/csu/sdolp/
 ### 📈 项目统计
 
 <div align="center">
+
+![Gitee Stats](https://gitee.com/cxzhang0508/sdolp/widgets/widget_card.svg?colors=4183c4,ffffff,ffffff,e3e9ed,666666,9b9b9b)
 
 </div>
 
