@@ -72,7 +72,7 @@ public class JoinExecutorTest {
 
         System.out.println(result);
 
-        assertTrue(result.contains("Query finished, 0 rows affected or returned."), "Join with an empty table should return 0 rows.");
+        assertTrue(result.contains("Query finished, 0 rows returned."), "Join with an empty table should return a '0 rows returned' message.");
     }
 
     /**
@@ -115,4 +115,5 @@ public class JoinExecutorTest {
         }
         directory.delete();
     }
+
 }

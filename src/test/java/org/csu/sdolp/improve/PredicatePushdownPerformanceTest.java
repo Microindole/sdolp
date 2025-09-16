@@ -1,4 +1,4 @@
-package org.csu.sdolp;
+package org.csu.sdolp.improve;
 
 import org.csu.sdolp.engine.QueryProcessor;
 import org.junit.jupiter.api.AfterEach;

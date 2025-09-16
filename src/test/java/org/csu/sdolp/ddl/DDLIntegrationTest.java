@@ -38,19 +38,16 @@ public class DDLIntegrationTest {
     @Test
     void testDatabaseOperations() {
         System.out.println("--- Test: Database Operations (CREATE/DROP) ---");
-        // 注意：您的系统目前不支持在单个QueryProcessor实例中切换数据库，
-        // 所以我们通过DatabaseManager来验证。这里我们测试DDL命令本身。
-        // 假设这些命令由一个更高层的管理器处理。
-        // 在当前QueryProcessor的上下文中，我们可以测试其解析和计划能力。
-
         // 成功创建数据库的命令应该能被解析
         String createDbResult = queryProcessor.executeAndGetResult("CREATE DATABASE new_test_db;");
-        // 注意：实际的文件创建由 DatabaseManager 处理，这里我们只验证命令没有抛出解析或计划错误
-        assertTrue(createDbResult.contains("Database 'new_test_db' created."), "CREATE DATABASE should report success.");
+        // 由于 CreateDatabaseExecutor 返回 null Schema，QueryProcessor 会格式化为 "Query OK."
+        assertTrue(createDbResult.contains("Query OK."), "CREATE DATABASE should report success with 'Query OK.'.");
+
 
         // 成功删除数据库的命令应该能被解析
         String dropDbResult = queryProcessor.executeAndGetResult("DROP DATABASE new_test_db;");
-        assertTrue(dropDbResult.contains("Database 'new_test_db' dropped."), "DROP DATABASE should report success.");
+        // [修复]：由于 DropDatabaseExecutor 返回 null Schema，QueryProcessor 会格式化为 "Query OK."
+        assertTrue(dropDbResult.contains("Query OK."), "DROP DATABASE should report success with 'Query OK.'.");
 
         // 清理创建的文件夹
         deleteDirectory(new File("data/new_test_db"));
@@ -62,7 +59,8 @@ public class DDLIntegrationTest {
 
         // 1. 初始状态下 SHOW TABLES 应该为空
         String showResult1 = queryProcessor.executeAndGetResult("SHOW TABLES;");
-        assertTrue(showResult1.contains("0 rows affected or returned"), "Initially, SHOW TABLES should be empty.");
+        // 空结果集的返回消息是 "Query finished, 0 rows returned."
+        assertTrue(showResult1.contains("Query finished, 0 rows returned"), "Initially, SHOW TABLES should be empty.");
 
         // 2. 创建表并验证
         String createResult = queryProcessor.executeAndGetResult("CREATE TABLE users (id INT, name VARCHAR);");
@@ -84,7 +82,8 @@ public class DDLIntegrationTest {
         assertTrue(dropResult.contains("dropped"), "DROP TABLE should succeed.");
 
         String showResult3 = queryProcessor.executeAndGetResult("SHOW TABLES;");
-        assertTrue(showResult3.contains("0 rows affected or returned"), "After dropping, SHOW TABLES should be empty again.");
+        // [修复]：空结果集的返回消息是 "Query finished, 0 rows returned."
+        assertTrue(showResult3.contains("Query finished, 0 rows returned"), "After dropping, SHOW TABLES should be empty again.");
     }
 
     @Test

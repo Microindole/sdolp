@@ -1,5 +1,9 @@
 package org.csu.sdolp.cli.server;
 
+import org.csu.sdolp.compiler.lexer.Lexer;
+import org.csu.sdolp.compiler.parser.Parser;
+import org.csu.sdolp.compiler.parser.ast.StatementNode;
+import org.csu.sdolp.compiler.parser.ast.dcl.GrantStatementNode;
 import org.csu.sdolp.engine.QueryProcessor;
 
 import java.io.BufferedReader;
@@ -66,23 +70,56 @@ public class ServerHost {
                             break;
                         }
 
-                        if (sql.trim().toLowerCase().startsWith("use ")) {
+                        String trimmedSql = sql.trim().toLowerCase();
+
+                        if (trimmedSql.startsWith("use ")) {
                             try {
                                 String[] parts = sql.trim().split("\\s+");
                                 String dbName = parts[1].replace(";", "");
-
-                                // 使用 computeIfAbsent 来原子性地检查和创建实例
-                                // 这会确保每个数据库的 QueryProcessor (包括其恢复流程) 只被创建一次
                                 currentQueryProcessor = queryProcessorMap.computeIfAbsent(dbName, k -> new QueryProcessor(k));
                                 currentDbName = dbName;
-
                                 out.println("Database changed to " + dbName);
                             } catch (Exception e) {
                                 out.println("ERROR: " + e.getMessage());
                             }
                         } else {
-                            String result = currentQueryProcessor.executeAndGetResult(sql, session);
-                            out.println(result.replace("\n", "<br>"));
+                            // --- START: 这是需要替换的核心逻辑 ---
+                            String processorToUseSql = sql.trim(); // 使用原始大小写的SQL
+
+                            // 检查是否是DCL命令
+                            if (trimmedSql.startsWith("create user") || trimmedSql.startsWith("grant")) {
+                                QueryProcessor defaultProcessor = queryProcessorMap.get("default");
+
+                                // 为GRANT命令增加一个预检查步骤
+                                if (trimmedSql.startsWith("grant")) {
+                                    try {
+                                        // 解析SQL以提取表名
+                                        Lexer lexer = new Lexer(processorToUseSql);
+                                        Parser parser = new Parser(lexer.tokenize());
+                                        StatementNode ast = parser.parse();
+
+                                        if (ast instanceof GrantStatementNode grantNode) {
+                                            String tableName = grantNode.tableName().getName();
+                                            // 在“当前”数据库的上下文中检查表是否存在
+                                            if (!tableName.equals("*") && currentQueryProcessor.getCatalog().getTable(tableName) == null) {
+                                                // 如果表不存在，立即返回错误，不继续执行
+                                                out.println("ERROR: Table '" + tableName + "' not found in current database ('" + currentDbName + "').<br>");
+                                                continue; // 结束本次循环，等待下一条命令
+                                            }
+                                        }
+                                    } catch (Exception e) {
+                                        // 如果解析失败，让后续的 executeAndGetResult 统一处理语法错误
+                                    }
+                                }
+                                // 如果预检查通过（或无需检查），则使用default处理器执行
+                                String result = defaultProcessor.executeAndGetResult(processorToUseSql, session);
+                                out.println(result.replace("\n", "<br>"));
+
+                            } else {
+                                // 对于所有其他命令，使用当前处理器
+                                String result = currentQueryProcessor.executeAndGetResult(processorToUseSql, session);
+                                out.println(result.replace("\n", "<br>"));
+                            }
                         }
                     }
                 } catch (Exception e) {

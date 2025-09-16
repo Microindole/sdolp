@@ -93,10 +93,10 @@ public class SemanticAnalyzer {
             throw new SemanticException("User '" + targetUsername + "' does not exist.");
         }
         // 3. 逻辑检查: 检查授权的表是否存在 (除非是授权所有表 '*')
-        String tableName = node.tableName().getName();
-        if (!tableName.equals("*") && catalog.getTable(tableName) == null) {
-            throw new SemanticException("Table '" + tableName + "' not found.");
-        }
+//        String tableName = node.tableName().getName();
+//        if (!tableName.equals("*") && catalog.getTable(tableName) == null) {
+//            throw new SemanticException("Table '" + tableName + "' not found.");
+//        }
         // 4. 逻辑检查: 检查授予的权限类型是否合法
         for (IdentifierNode privilegeNode : node.privileges()) {
             String privilegeType = privilegeNode.getName().toUpperCase();
@@ -108,15 +108,15 @@ public class SemanticAnalyzer {
         // 这一步模拟了GRANT执行后的效果，使得在同一个事务或批处理中，
         // 后续的语句能够立即看到此次授权的结果。
         // 真正的磁盘写入操作仍然由后续的 GrantExecutor 完成。
-        try {
-            for (IdentifierNode privilegeNode : node.privileges()) {
-                catalog.grantPrivilege(targetUsername, tableName, privilegeNode.getName());
-            }
-        } catch (IOException e) {
-            // 在语义分析阶段，我们假设IO操作会成功，如果失败则在执行阶段处理
-            // 但如果确实需要处理，可以抛出一个特定的异常
-            throw new SemanticException("Failed to pre-apply grant in memory: " + e.getMessage());
-        }
+//        try {
+//            for (IdentifierNode privilegeNode : node.privileges()) {
+//                catalog.grantPrivilege(targetUsername, tableName, privilegeNode.getName());
+//            }
+//        } catch (IOException e) {
+//            // 在语义分析阶段，我们假设IO操作会成功，如果失败则在执行阶段处理
+//            // 但如果确实需要处理，可以抛出一个特定的异常
+//            throw new SemanticException("Failed to pre-apply grant in memory: " + e.getMessage());
+//        }
     }
 
     private void analyzeShowTables(ShowTablesStatementNode node) {

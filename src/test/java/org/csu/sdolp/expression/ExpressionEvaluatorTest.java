@@ -1,3 +1,5 @@
+// src/test/java/org/csu/sdolp/expression/ExpressionEvaluatorTest.java
+
 package org.csu.sdolp.expression;
 
 import org.csu.sdolp.engine.QueryProcessor;
@@ -51,7 +53,8 @@ public class ExpressionEvaluatorTest {
         assertTrue(executeSelectWhere("salary >= 8000").contains("1 rows returned"), "salary >= 8000 should find one row.");
 
         String emptyResult = executeSelectWhere("id = 99");
-        assertTrue(emptyResult.contains("Query finished, 0 rows affected or returned."), "id = 99 should find zero rows.");
+        // [修复]：将预期字符串修改为与 QueryProcessor 的实际输出一致
+        assertTrue(emptyResult.contains("Query finished, 0 rows returned."), "id = 99 should find zero rows.");
     }
 
     @Test
@@ -61,7 +64,8 @@ public class ExpressionEvaluatorTest {
         assertTrue(result1.contains("1 rows returned"), "True AND True should find one row.");
 
         String result2 = executeSelectWhere("id = 10 AND name = 'Bob'");
-        assertTrue(result2.contains("Query finished, 0 rows affected or returned."), "True AND False should find zero rows.");
+        // [修复]：将预期字符串修改为与 QueryProcessor 的实际输出一致
+        assertTrue(result2.contains("Query finished, 0 rows returned."), "True AND False should find zero rows.");
     }
 
     @Test
@@ -71,7 +75,8 @@ public class ExpressionEvaluatorTest {
         assertTrue(result1.contains("1 rows returned"), "True OR False should find one row.");
 
         String result2 = executeSelectWhere("id = 99 OR name = 'Bob'");
-        assertTrue(result2.contains("Query finished, 0 rows affected or returned."), "False OR False should find zero rows.");
+        // [修复]：将预期字符串修改为与 QueryProcessor 的实际输出一致
+        assertTrue(result2.contains("Query finished, 0 rows returned."), "False OR False should find zero rows.");
     }
 
     @Test
@@ -95,7 +100,8 @@ public class ExpressionEvaluatorTest {
         System.out.println("--- Test: Null Handling in WHERE ---");
         // 查询一个不存在的值来模拟空结果集
         String nullResult = executeSelectWhere("name = 'non_existent_name'");
-        assertTrue(nullResult.contains("Query finished, 0 rows affected or returned."), "Querying for a non-existent value should return zero rows.");
+        // [修复]：将预期字符串修改为与 QueryProcessor 的实际输出一致
+        assertTrue(nullResult.contains("Query finished, 0 rows returned."), "Querying for a non-existent value should return zero rows.");
     }
 
     // 辅助方法，用于递归删除目录

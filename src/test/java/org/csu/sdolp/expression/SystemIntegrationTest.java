@@ -1,4 +1,6 @@
-package org.csu.sdolp;
+// src/test/java/org/csu/sdolp/SystemIntegrationTest.java
+
+package org.csu.sdolp.expression;
 
 import org.csu.sdolp.engine.QueryProcessor;
 import org.junit.jupiter.api.AfterEach;
@@ -16,20 +18,38 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 public class SystemIntegrationTest {
 
-    private final String TEST_DB_FILE = "system_integration_test.db";
+    // [修复 1]：使用数据库名称代替文件名，与 QueryProcessor 的逻辑保持一致
+    private final String TEST_DB_NAME = "system_integration_test_db";
     private QueryProcessor queryProcessor;
 
     @BeforeEach
     void setUp() {
-        // 每次测试前删除旧的数据库文件
-        new File(TEST_DB_FILE).delete();
-        queryProcessor = new QueryProcessor(TEST_DB_FILE);
+        // [修复 2]：在每次测试前，递归删除整个旧的数据库目录
+        deleteDirectory(new File("data/" + TEST_DB_NAME));
+        queryProcessor = new QueryProcessor(TEST_DB_NAME);
     }
 
     @AfterEach
     void tearDown() throws IOException {
-        queryProcessor.close();
-        new File(TEST_DB_FILE).delete();
+        if (queryProcessor != null) {
+            queryProcessor.close();
+        }
+        // [修复 3]：在测试结束后，同样清理整个目录
+        deleteDirectory(new File("data/" + TEST_DB_NAME));
+    }
+
+    // [修复 4]：添加一个递归删除目录的辅助方法
+    private void deleteDirectory(File directory) {
+        if (!directory.exists()) {
+            return;
+        }
+        File[] allContents = directory.listFiles();
+        if (allContents != null) {
+            for (File file : allContents) {
+                deleteDirectory(file);
+            }
+        }
+        directory.delete();
     }
 
     @Test
@@ -39,10 +59,10 @@ public class SystemIntegrationTest {
         queryProcessor.execute("INSERT INTO users (id, name, age) VALUES (1, 'Alice', 20);");
         queryProcessor.execute("INSERT INTO users (id, name, age) VALUES (2, 'Bob', 25);");
         queryProcessor.execute("INSERT INTO users (id, name, age) VALUES (3, 'Charlie', 20);");
-        
+
         System.out.println("\n--- Selecting all users ---");
         queryProcessor.execute("SELECT * FROM users;");
-        
+
         System.out.println("\n--- Selecting users with age = 20 ---");
         queryProcessor.execute("SELECT id, name FROM users WHERE age = 20;");
     }
@@ -66,7 +86,7 @@ public class SystemIntegrationTest {
 
         System.out.println("\n--- Deleting products with price < 100 ---");
         queryProcessor.execute("DELETE FROM products WHERE price < 100;");
-        
+
         System.out.println("\n--- Products after delete ---");
         queryProcessor.execute("SELECT * FROM products;");
     }
@@ -90,7 +110,7 @@ public class SystemIntegrationTest {
     }
     @Test
     void testComplexWhereClauseFlow() {
-        System.out.println("\n--- Test: Complex WHERE clause with AND/OR ---");
+        System.out.println("--- Test: Complex WHERE clause with AND/OR ---");
         queryProcessor.execute("CREATE TABLE students (id INT, name VARCHAR, age INT, major VARCHAR);");
         queryProcessor.execute("INSERT INTO students (id, name, age, major) VALUES (1, 'Alice', 20, 'CS');");
         queryProcessor.execute("INSERT INTO students (id, name, age, major) VALUES (2, 'Bob', 22, 'EE');");
@@ -124,9 +144,6 @@ public class SystemIntegrationTest {
         queryProcessor.execute("INSERT INTO to_be_modified (id, name, score) VALUES (2, 'added', 100);");
 
         System.out.println("\n--- Table after ALTER and new INSERT ---");
-        // 注意：第一次插入的 'initial' 行，其 score 列应该是 null。我们的简化模型会如何表现？
-        // 在我们的 Tuple/Value 模型下，它会是 null object in value list.
-        // select * 应该能正常工作并显示三列
         queryProcessor.execute("SELECT * FROM to_be_modified;");
 
         // 4. 使用 DROP TABLE 删除表
@@ -155,7 +172,6 @@ public class SystemIntegrationTest {
         assertTrue(showResult.contains("table_b"), "SHOW TABLES result should contain 'table_b'");
         assertTrue(showResult.contains("2 rows returned"), "Should indicate 2 rows were returned");
 
-
         // 3. Drop one table and verify again
         queryProcessor.execute("DROP TABLE table_a;");
         System.out.println("\n--- SHOW TABLES after dropping one table ---");
@@ -177,15 +193,15 @@ public class SystemIntegrationTest {
         queryProcessor.close();
 
         System.out.println("\n--- Reopening database... ---");
-        queryProcessor = new QueryProcessor(TEST_DB_FILE);
+        // [修复 5]：使用正确的数据库名称重新打开
+        queryProcessor = new QueryProcessor(TEST_DB_NAME);
 
         System.out.println("\n--- Selecting from table after reopening ---");
-        // 这条查询将验证CREATE TABLE和INSERT操作是否都已持久化
         queryProcessor.execute("SELECT * FROM persistent_table WHERE id = 999;");
     }
     @Test
     void testAggregationAndGroupByFlow() {
-        System.out.println("\n--- Test: Aggregation and Group By ---");
+        System.out.println("--- Test: Aggregation and Group By ---");
         queryProcessor.execute("CREATE TABLE sales (product VARCHAR, region VARCHAR, amount INT);");
         queryProcessor.execute("INSERT INTO sales (product, region, amount) VALUES ('A', 'East', 100);");
         queryProcessor.execute("INSERT INTO sales (product, region, amount) VALUES ('B', 'West', 250);");

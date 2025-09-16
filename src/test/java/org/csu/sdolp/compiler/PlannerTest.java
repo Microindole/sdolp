@@ -34,6 +34,7 @@ import static org.junit.Assert.*;
  */
 public class PlannerTest {
 
+
     private final String TEST_DB_FILE = "test_planner.db";
     private DiskManager diskManager;
     private BufferPoolManager bufferPoolManager;
@@ -125,32 +126,40 @@ public class PlannerTest {
 
     @Test
     public void testSelectWithFilterPlan() {
-        System.out.println("--- Running test: testSelectWithFilterPlan ---");
+        System.out.println("--- Running test: testSelectWithFilterPlan (Updated for Predicate Pushdown) ---");
         PlanNode plan = createPlanForSql("SELECT * FROM users WHERE id = 1;");
-        // 期望: Filter -> SeqScan
-        assertTrue(plan instanceof FilterPlanNode);
-        assertEquals(2, plan.getOutputSchema().getColumns().size());
 
-        FilterPlanNode filterPlan = (FilterPlanNode) plan;
-        assertTrue(filterPlan.getChild() instanceof SeqScanPlanNode);
-        assertNotNull(filterPlan.getPredicate());
+        // 验证：由于谓词下推，期望直接得到一个带有谓词的 SeqScanPlanNode
+        assertTrue("With predicate pushdown, the plan should be a SeqScanPlanNode", plan instanceof SeqScanPlanNode);
+        SeqScanPlanNode scanPlan = (SeqScanPlanNode) plan;
+
+        // 验证：SeqScanPlanNode 内部应该包含了 WHERE 子句的条件
+        assertNotNull("The SeqScanPlanNode should contain the predicate from the WHERE clause", scanPlan.getPredicate());
+
+        assertEquals(2, plan.getOutputSchema().getColumns().size());
         System.out.println("Result: Test PASSED.\n");
     }
 
     @Test
     public void testSelectWithFilterAndProjectionPlan() {
-        System.out.println("--- Running test: testSelectWithFilterAndProjectionPlan ---");
+        System.out.println("--- Running test: testSelectWithFilterAndProjectionPlan (Updated for Predicate Pushdown) ---");
         PlanNode plan = createPlanForSql("SELECT name FROM users WHERE id > 10;");
-        // 期望: Project -> Filter -> SeqScan
-        assertTrue(plan instanceof ProjectPlanNode);
+
+        // 期望: Project -> SeqScan (带有下推的谓词)
+        assertTrue("The top node of the plan should be ProjectPlanNode", plan instanceof ProjectPlanNode);
         assertEquals(1, plan.getOutputSchema().getColumns().size());
         assertEquals("name", plan.getOutputSchema().getColumns().get(0).getName());
 
         ProjectPlanNode projectPlan = (ProjectPlanNode) plan;
-        assertTrue(projectPlan.getChild() instanceof FilterPlanNode);
 
-        FilterPlanNode filterPlan = (FilterPlanNode) projectPlan.getChild();
-        assertTrue(filterPlan.getChild() instanceof SeqScanPlanNode);
+        // 验证：ProjectPlanNode 的子节点现在应该是带有谓词的 SeqScanPlanNode
+        assertTrue("The child of ProjectPlanNode should be SeqScanPlanNode due to predicate pushdown", projectPlan.getChild() instanceof SeqScanPlanNode);
+
+        SeqScanPlanNode scanPlan = (SeqScanPlanNode) projectPlan.getChild();
+
+        // 验证：SeqScanPlanNode 内部应该包含了 WHERE 子句的条件
+        assertNotNull("The underlying SeqScanPlanNode should contain the predicate", scanPlan.getPredicate());
+
         System.out.println("Result: Test PASSED.\n");
     }
 }

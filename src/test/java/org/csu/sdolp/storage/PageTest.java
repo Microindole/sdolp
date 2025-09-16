@@ -1,4 +1,4 @@
-package org.csu.sdolp;
+package org.csu.sdolp.storage;
 
 import org.csu.sdolp.common.model.*;
 import org.csu.sdolp.storage.page.Page;

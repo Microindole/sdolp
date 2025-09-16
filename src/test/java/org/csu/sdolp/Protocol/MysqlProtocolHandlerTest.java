@@ -58,7 +58,7 @@ public class MysqlProtocolHandlerTest {
     void testHandshakeAndAuthentication() throws Exception {
         System.out.println("--- Test: Handshake and Authentication Flow ---");
 
-        // --- 修复点 1: 创建一个结构更完整的认证包 ---
+        // --- 步骤 1: 创建一个模拟客户端发送的、结构完整的认证包 ---
         ByteArrayOutputStream authPayloadStream = new ByteArrayOutputStream();
         // Client Flags (4 bytes)
         authPayloadStream.write(new byte[]{ (byte)0x85, (byte)0xa2, (byte)0x03, 0x00 });
@@ -68,30 +68,37 @@ public class MysqlProtocolHandlerTest {
         authPayloadStream.write((byte) 0xff);
         // Filler (23 bytes)
         authPayloadStream.write(new byte[23]);
-        // Username
+        // Username 'root'
         authPayloadStream.write("root".getBytes(StandardCharsets.UTF_8));
         authPayloadStream.write((byte) 0x00);
-        // Password (length prefixed)
+        // Password (empty)
         authPayloadStream.write((byte) 0x00);
 
         byte[] authPacketPayload = authPayloadStream.toByteArray();
         byte[] authPacket = createPacket(authPacketPayload, 1);
         setClientInput(authPacket);
 
+        // 注意: MysqlProtocolHandler 的 run() 方法会忽略这里传入的 mock 对象,
+        // 并创建一个真实的 QueryProcessor。我们仍然需要传入它们以满足构造函数的要求。
         Catalog mockCatalog = Mockito.mock(Catalog.class);
         when(mockQueryProcessor.getCatalog()).thenReturn(mockCatalog);
         when(mockCatalog.getPasswordHash("root")).thenReturn("dummy_hash".getBytes());
 
         MysqlProtocolHandler handler = new MysqlProtocolHandler(mockSocket, mockQueryProcessor, mockCatalog, 12345);
 
-        // --- 修复点 2: 在单独的线程中运行handler，并设置超时 ---
+        // --- 步骤 2: 在单独的线程中运行 handler ---
         ExecutorService executor = Executors.newSingleThreadExecutor();
         executor.submit(handler);
         executor.shutdown();
-        // 给handler足够的时间处理握手和认证，然后结束
-        executor.awaitTermination(500, TimeUnit.MILLISECONDS);
-        when(mockSocket.isClosed()).thenReturn(true); // 模拟客户端断开连接，让run()循环退出
 
+        // 原始的 500ms 超时对于真实的数据库初始化（包括日志恢复）来说可能太短。
+        // 我们将其增加到 5 秒，以确保 handler 线程有足够的时间完成所有启动和认证流程。
+        boolean terminated = executor.awaitTermination(5, TimeUnit.SECONDS);
+        assertTrue(terminated, "Handler thread should terminate within the extended timeout.");
+
+        when(mockSocket.isClosed()).thenReturn(true); // 确保在检查结果前，模拟的socket已关闭
+
+        // --- 步骤 3: 验证服务器的响应 ---
         byte[] serverResponseBytes = serverOutputStream.toByteArray();
         String serverResponseString = new String(serverResponseBytes, StandardCharsets.UTF_8);
 
@@ -99,15 +106,14 @@ public class MysqlProtocolHandlerTest {
         assertTrue(serverResponseBytes[4] == 10, "Server should send a handshake packet starting with protocol version 10.");
         assertTrue(serverResponseString.contains("minidb"), "Handshake packet should contain the server version string 'minidb'.");
 
-        // --- 修复点 3: 更精确地计算握手包长度来定位OK包 ---
+        // 更精确地计算握手包长度来定位后续的 OK 包
         int handshakePayloadLength = (serverResponseBytes[0] & 0xFF) | ((serverResponseBytes[1] & 0xFF) << 8) | ((serverResponseBytes[2] & 0xFF) << 16);
         int handshakePacketLength = 4 + handshakePayloadLength;
 
-        assertTrue(serverResponseBytes.length > handshakePacketLength, "Server should send more than just the handshake.");
+        assertTrue(serverResponseBytes.length > handshakePacketLength, "Server should send more than just the handshake (i.e., an OK packet).");
         assertTrue(serverResponseBytes[handshakePacketLength + 4] == 0x00, "Server should send an OK packet (starts with 0x00) after successful authentication.");
         System.out.println("[SUCCESS] Handshake and authentication flow verified.");
     }
-
     private byte[] createPacket(byte[] payload, int sequenceId) {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         int len = payload.length;

@@ -1,7 +1,9 @@
 package org.csu.sdolp.catalog;
 
+import org.csu.sdolp.DatabaseManager;
 import org.csu.sdolp.common.model.*;
 import org.csu.sdolp.storage.buffer.BufferPoolManager;
+import org.csu.sdolp.storage.disk.DiskManager;
 import org.csu.sdolp.storage.page.Page;
 import org.csu.sdolp.storage.page.PageId;
 
@@ -149,9 +151,11 @@ public class Catalog {
             Page usersPage = bufferPoolManager.getPage(usersTableFirstPageId);
             List<Tuple> userTuples = usersPage.getAllTuples(usersTableSchema);
             for (Tuple userTuple : userTuples) {
+                int userId = (int) userTuple.getValues().get(0).getValue();
                 String userName = (String) userTuple.getValues().get(1).getValue();
                 String passwordHash = (String) userTuple.getValues().get(2).getValue();
                 users.put(userName, passwordHash.getBytes(StandardCharsets.UTF_8));
+                userIds.put(userName, userId);
             }
 
             Page privilegesPage = bufferPoolManager.getPage(privilegesTableFirstPageId);
@@ -531,22 +535,48 @@ public class Catalog {
      */
     public boolean hasPermission(String username, String tableName, String privilegeType) {
         if (username == null) {
-            return false; // 未登录用户没有任何权限
+            return false; // 未认证用户无任何权限
         }
 
+        // 第一次检查：使用当前内存缓存
         List<PrivilegeInfo> privileges = userPrivileges.get(username);
-        if (privileges == null) {
-            return false; // 该用户没有任何权限记录
+        if (privileges != null) {
+            // 检查是否有全局 ALL 权限
+            if (privileges.stream().anyMatch(p -> p.tableName.equals("*") && p.privilegeType.equalsIgnoreCase("ALL"))) {
+                return true;
+            }
+            // 检查是否有对该表的 ALL 权限
+            if (privileges.stream().anyMatch(p -> p.tableName.equalsIgnoreCase(tableName) && p.privilegeType.equalsIgnoreCase("ALL"))) {
+                return true;
+            }
+            // 检查是否有具体权限
+            if (privileges.stream().anyMatch(p -> p.tableName.equalsIgnoreCase(tableName) && p.privilegeType.equalsIgnoreCase(privilegeType))) {
+                return true;
+            }
         }
-        // 检查用户是否对所有表有 ALL 权限 (超级用户)
+
+        // 如果第一次检查失败，可能是因为缓存过时。现在强制从 'default' 数据库重新加载所有权限信息。
+        System.out.println("[Catalog] 本地权限缓存检查失败，为 '" + username + "' 强制从全局 'default' 目录重新加载权限...");
+        try {
+            forceReloadPermissions();
+        } catch (IOException e) {
+            System.err.println("致命错误: 在权限检查期间无法重新加载权限: " + e.getMessage());
+            return false; // 安全起见，加载失败则拒绝访问
+        }
+
+        // 第二次检查：使用刚刚刷新过的内存缓存
+        privileges = userPrivileges.get(username);
+        if (privileges == null) {
+            return false; // 重新加载后依然没有该用户的任何权限记录
+        }
+
+        // 再次执行与第一次检查完全相同的逻辑
         if (privileges.stream().anyMatch(p -> p.tableName.equals("*") && p.privilegeType.equalsIgnoreCase("ALL"))) {
             return true;
         }
-        // 检查用户是否对该特定表有 ALL 权限
         if (privileges.stream().anyMatch(p -> p.tableName.equalsIgnoreCase(tableName) && p.privilegeType.equalsIgnoreCase("ALL"))) {
             return true;
         }
-        // 检查用户是否对该特定表有具体的操作权限
         return privileges.stream().anyMatch(p -> p.tableName.equalsIgnoreCase(tableName) && p.privilegeType.equalsIgnoreCase(privilegeType));
     }
 
@@ -612,6 +642,74 @@ public class Catalog {
             return tableInfo.getSchema();
         }
         return null;
+    }
+
+    private void forceReloadPermissions() throws IOException {
+        // 清除当前可能已过时的缓存
+        this.users.clear();
+        this.userIds.clear();
+        this.userPrivileges.clear();
+
+        DiskManager defaultDiskManager = null;
+        try {
+            // 创建一个临时的管理器，专门用于读取 default 数据库的文件
+            String defaultDbPath = DatabaseManager.getDbFilePath("default");
+            defaultDiskManager = new DiskManager(defaultDbPath);
+            defaultDiskManager.open();
+            BufferPoolManager defaultBPM = new BufferPoolManager(10, defaultDiskManager, "LRU");
+
+            // 从 default 库的系统表中找到用户表和权限表的起始页ID
+            Page defaultTablesTablePage = defaultBPM.getPage(new PageId(0));
+            List<Tuple> catalogTuples = defaultTablesTablePage.getAllTuples(this.tablesTableSchema);
+
+            PageId usersPageId = null;
+            PageId privsPageId = null;
+
+            for (Tuple t : catalogTuples) {
+                String tableName = (String) t.getValues().get(1).getValue();
+                int pageId = (int) t.getValues().get(2).getValue();
+                if (CATALOG_USERS_TABLE_NAME.equals(tableName)) {
+                    usersPageId = new PageId(pageId);
+                }
+                if (CATALOG_PRIVILEGES_TABLE_NAME.equals(tableName)) {
+                    privsPageId = new PageId(pageId);
+                }
+            }
+
+            if (usersPageId == null || privsPageId == null) {
+                System.err.println("[Catalog.forceReload] 警告: 在 'default' 数据库中找不到用户或权限系统表。");
+                return;
+            }
+
+            // 加载所有用户数据到内存缓存
+            Page usersPage = defaultBPM.getPage(usersPageId);
+            List<Tuple> userTuples = usersPage.getAllTuples(usersTableSchema);
+            for (Tuple userTuple : userTuples) {
+                int userId = (int) userTuple.getValues().get(0).getValue();
+                String userName = (String) userTuple.getValues().get(1).getValue();
+                String passwordHash = (String) userTuple.getValues().get(2).getValue();
+                this.users.put(userName, passwordHash.getBytes(StandardCharsets.UTF_8));
+                this.userIds.put(userName, userId);
+            }
+
+            // 加载所有权限数据到内存缓存
+            Page privilegesPage = defaultBPM.getPage(privsPageId);
+            List<Tuple> privilegeTuples = privilegesPage.getAllTuples(privilegesTableSchema);
+            for (Tuple privilegeTuple : privilegeTuples) {
+                int userId = (int) privilegeTuple.getValues().get(1).getValue();
+                String tableName = (String) privilegeTuple.getValues().get(2).getValue();
+                String privilegeType = (String) privilegeTuple.getValues().get(3).getValue();
+                String userName = findUserNameById(userId, userTuples);
+                if (userName != null) {
+                    this.userPrivileges.computeIfAbsent(userName, k -> new ArrayList<>())
+                            .add(new PrivilegeInfo(tableName, privilegeType));
+                }
+            }
+        } finally {
+            if (defaultDiskManager != null) {
+                defaultDiskManager.close();
+            }
+        }
     }
 }
 
