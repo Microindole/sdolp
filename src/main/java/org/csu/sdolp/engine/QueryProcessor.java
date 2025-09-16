@@ -167,21 +167,27 @@ public class QueryProcessor {
         }
         List<Tuple> results = new ArrayList<>();
         while (iterator.hasNext()) {
-            results.add(iterator.next());
-        }
-
-        Schema schema = iterator.getOutputSchema();
-        if (schema == null) {
-            if (results.size() == 1) {
-                return results.get(0).getValues().get(0).toString();
+            Tuple t = iterator.next();
+            if (t != null) {
+                results.add(t);
             }
+        }
+        Schema schema = iterator.getOutputSchema();
+        if (schema != null && schema.getColumnNames().get(0).endsWith("_rows")) {
+            if (results.isEmpty() || results.get(0).getValues().isEmpty()) {
+                return "Query OK, 0 rows affected.";
+            }
+            int affectedRows = (Integer) results.get(0).getValues().get(0).getValue();
+            return "Query OK, " + affectedRows + " rows affected.";
+        }
+        if (schema == null) { // DDL, etc.
             return "Query OK.";
         }
 
-
         if (results.isEmpty()) {
-            return "Query finished, 0 rows affected or returned.";
+            return "Query finished, 0 rows returned.";
         }
+
 
         StringBuilder sb = new StringBuilder();
         List<String> columnNames = schema.getColumnNames();

@@ -83,7 +83,12 @@ public class ExecutionEngine {
         }
         if (plan instanceof SeqScanPlanNode seqScanPlan) {
             TableHeap tableHeap = new TableHeap(bufferPoolManager, seqScanPlan.getTableInfo(), logManager, lockManager);
-            return new SeqScanExecutor(tableHeap, txn);
+            AbstractPredicate predicate = null;
+            if (seqScanPlan.getPredicate() != null) {
+                predicate = createPredicateFromAst(seqScanPlan.getPredicate(), seqScanPlan.getOutputSchema());
+            }
+            // 将谓词（可能为 null）传递给执行器
+            return new SeqScanExecutor(tableHeap, txn, predicate);
         }
         if (plan instanceof DeletePlanNode deletePlan) {
             TupleIterator childPlan = buildExecutorTree(deletePlan.getChild(), txn);

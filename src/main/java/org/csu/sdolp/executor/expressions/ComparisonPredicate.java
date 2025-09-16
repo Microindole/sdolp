@@ -27,6 +27,23 @@ public class ComparisonPredicate extends AbstractPredicate {
         Value tupleValue = tuple.getValues().get(columnIndex);
 
         // 类型不匹配则直接返回 false
+        if (tupleValue == null || tupleValue.getValue() == null || value == null || value.getValue() == null) {
+            return false;
+        }
+
+        if (tupleValue.getValue() instanceof Number && value.getValue() instanceof Number) {
+            double v1 = ((Number) tupleValue.getValue()).doubleValue();
+            double v2 = ((Number) value.getValue()).doubleValue();
+            return switch (operator) {
+                case "EQUAL" -> v1 == v2;
+                case "NOT_EQUAL" -> v1 != v2;
+                case "GREATER" -> v1 > v2;
+                case "GREATER_EQUAL" -> v1 >= v2;
+                case "LESS" -> v1 < v2;
+                case "LESS_EQUAL" -> v1 <= v2;
+                default -> false;
+            };
+        }
         if (tupleValue.getType() != value.getType()) {
             return false;
         }
@@ -35,7 +52,6 @@ public class ComparisonPredicate extends AbstractPredicate {
         Comparable v2 = (Comparable) value.getValue();
         int cmp = v1.compareTo(v2);
 
-        // 根据构造时传入的运算符进行判断
         return switch (operator) {
             case "EQUAL" -> cmp == 0;
             case "NOT_EQUAL" -> cmp != 0;
@@ -46,4 +62,6 @@ public class ComparisonPredicate extends AbstractPredicate {
             default -> throw new UnsupportedOperationException("Unsupported operator in ComparisonPredicate: " + operator);
         };
     }
+
+
 }

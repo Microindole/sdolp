@@ -193,27 +193,28 @@ public class Planner {
      * 【已修复版本】创建 SELECT 查询计划的逻辑
      */
     private PlanNode createSelectPlan(SelectStatementNode ast) {
-        // 1. 基础扫描层
+        //基础扫描层
         TableInfo fromTableInfo = catalog.getTable(ast.fromTable().getName());
-        PlanNode plan = new SeqScanPlanNode(fromTableInfo);
-
-        // 2. WHERE 过滤层 (使用索引或全表扫描)
+        PlanNode plan;
+        // 检查是否有 WHERE 子句，以及是否能找到合适的索引
         IndexInfo indexInfo = findIndexForPredicate(fromTableInfo.getTableName(), ast.whereClause());
+
         if (indexInfo != null) {
+            // 优化器：发现可以使用索引，生成 IndexScan 计划
             System.out.println("[Planner] Index found for '" + fromTableInfo.getTableName() + "." + indexInfo.getColumnName() + "'. Using Index Scan.");
             Value searchValue = extractValueFromPredicate(ast.whereClause());
             plan = new IndexScanPlanNode(fromTableInfo, indexInfo, searchValue);
         } else {
+            // 优化器：没有找到合适的索引
             System.out.println("[Planner] No suitable index found for query. Using Sequential Scan.");
-            if (ast.whereClause() != null) {
-                plan = new FilterPlanNode(plan, ast.whereClause());
-            }
+            // 将 WHERE 子句（如果存在）直接下推到 SeqScanPlanNode
+            plan = new SeqScanPlanNode(fromTableInfo, ast.whereClause());
+            // 注意：我们不再在这里创建 FilterPlanNode，因为过滤逻辑已经被下推了
         }
-
         // 3. JOIN 层
         if (ast.joinTable() != null) {
             TableInfo rightTableInfo = catalog.getTable(ast.joinTable().getName());
-            PlanNode rightPlan = new SeqScanPlanNode(rightTableInfo);
+            PlanNode rightPlan = new SeqScanPlanNode(rightTableInfo, null);
             plan = new JoinPlanNode(plan, rightPlan, ast.joinCondition());
         }
 
@@ -379,7 +380,7 @@ public class Planner {
 
     private PlanNode createDeletePlan(DeleteStatementNode ast) {
         TableInfo tableInfo = catalog.getTable(ast.tableName().getName());
-        PlanNode childPlan = new SeqScanPlanNode(tableInfo);
+        PlanNode childPlan = new SeqScanPlanNode(tableInfo, ast.whereClause());
         if (ast.whereClause() != null) {
             childPlan = new FilterPlanNode(childPlan, ast.whereClause());
         }
@@ -388,7 +389,7 @@ public class Planner {
 
     private PlanNode createUpdatePlan(UpdateStatementNode ast) {
         TableInfo tableInfo = catalog.getTable(ast.tableName().getName());
-        PlanNode childPlan = new SeqScanPlanNode(tableInfo);
+        PlanNode childPlan = new SeqScanPlanNode(tableInfo, ast.whereClause());
         if (ast.whereClause() != null) {
             childPlan = new FilterPlanNode(childPlan, ast.whereClause());
         }

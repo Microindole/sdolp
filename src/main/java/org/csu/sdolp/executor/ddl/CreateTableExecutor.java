@@ -99,7 +99,7 @@ public class CreateTableExecutor implements TupleIterator {
             // 3. 遍历表中的所有行，并将其插入到索引中
             Schema schema = tableInfo.getSchema();
             int columnIndex = schema.getColumnIndex(primaryKeyColumnName);
-            TupleIterator scan = new SeqScanExecutor(tableHeap, txn);
+            TupleIterator scan = new SeqScanExecutor(tableHeap, txn, null);
             while (scan.hasNext()) {
                 Tuple tuple = scan.next();
                 Value key = tuple.getValues().get(columnIndex);

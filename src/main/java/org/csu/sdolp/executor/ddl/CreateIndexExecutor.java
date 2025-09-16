@@ -50,7 +50,7 @@ public class CreateIndexExecutor implements TupleIterator {
             Schema schema = tableInfo.getSchema();
             int columnIndex = schema.getColumnIndex(plan.getColumnName());
 
-            TupleIterator scan = new SeqScanExecutor(tableHeap, txn);
+            TupleIterator scan = new SeqScanExecutor(tableHeap, txn, null);
             while (scan.hasNext()) {
                 Tuple tuple = scan.next();
                 Value key = tuple.getValues().get(columnIndex);

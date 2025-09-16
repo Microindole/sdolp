@@ -13,6 +13,7 @@ import org.csu.sdolp.transaction.Transaction;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 
 public class DeleteExecutor implements TupleIterator {
@@ -46,9 +47,11 @@ public class DeleteExecutor implements TupleIterator {
             tuplesToDelete.add(child.next());
         }
 
+        tuplesToDelete.sort(Comparator.comparing(Tuple::getRid,
+                Comparator.comparingInt(RID::pageNum).thenComparingInt(RID::slotIndex).reversed()));
+
         int deletedCount = 0;
         for (Tuple tuple : tuplesToDelete) {
-            // 先删除索引，再删除数据
             updateAllIndexesForDelete(tuple);
             if (tableHeap.deleteTuple(tuple.getRid(), txn)) {
                 deletedCount++;
