@@ -107,7 +107,22 @@ mvn clean install
 
   程序会引导你选择要分析的数据库日志。
 
+## 📁 模块化架构详解
 
+为了提升代码的可读性、可维护性和可扩展性，本项目采用了高度模块化的设计。每个模块权责分明，共同构成一个完整的关系型数据库内核。
+
+> 注意：如果在本页面无法直接点击链接，请确保您是在项目的 Gitee/Github 仓库中查看此 README 文件。
+
+**点击下方链接查看每个模块的详细设计文档：**
+
+- [**📄 1. SQL 编译器 (Compiler)**](https://www.google.com/search?q=./docs/compiler_design.md)
+- [**📄 2. 执行引擎 (Execution Engine)**](https://www.google.com/search?q=./docs/execution_engine_design.md)
+- [**📄 3. 存储引擎 (Storage Engine)**](https://www.google.com/search?q=./docs/storage_engine_design.md)
+- [**📄 4. 事务与并发控制 (Transaction & Concurrency)**](https://www.google.com/search?q=./docs/transaction_design.md)
+- [**📄 5. 元数据管理 (Catalog)**](https://www.google.com/search?q=./docs/catalog_design.md)
+- [**📄 6. 网络服务与客户端 (Networking & Client)**](https://www.google.com/search?q=./docs/networking_client_design.md)
+- [**📄 7. 通用模型与工具 (Common & Utilities)**](https://www.google.com/search?q=./docs/common_utils_design.md)
+- [**📄 8. 全面集成测试指南 (Comprehensive Test Guide)**](https://www.google.com/search?q=./docs/Test.md)
 
 ## 📁 项目目录结构
 
@@ -175,13 +190,21 @@ src/main/java/org/csu/sdolp/
 
 
 
+## ⭐ 项目支持
+
+**如果这个项目对您有帮助，请在** [**Gitee**](https://gitee.com/cxzhang0508/sdolp) **给我们点个 ⭐！**
+
+### 📈 项目统计
+
+<div align="center">
+
+</div>
 
 ## 📄 许可证
 
 本项目采用 MIT 许可证。详情请见 [LICENSE](LICENSE) 文件。
 
 Copyright (c) 2025 The sdolp Project Authors
-
 
 
 
