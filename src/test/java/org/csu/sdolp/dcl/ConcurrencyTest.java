@@ -1,91 +1,139 @@
 package org.csu.sdolp.dcl;
 
-import org.csu.sdolp.engine.QueryProcessor;
+import org.csu.sdolp.catalog.Catalog;
+import org.csu.sdolp.catalog.TableInfo;
+import org.csu.sdolp.common.model.*;
+import org.csu.sdolp.executor.TableHeap;
+import org.csu.sdolp.storage.buffer.BufferPoolManager;
+import org.csu.sdolp.storage.disk.DiskManager;
+import org.csu.sdolp.storage.page.PageId;
+import org.csu.sdolp.transaction.LockManager;
+import org.csu.sdolp.transaction.Transaction;
+import org.csu.sdolp.transaction.TransactionManager;
+import org.csu.sdolp.transaction.log.LogManager;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * 专门用于测试并发控制和锁管理器的集成测试.
+ */
 public class ConcurrencyTest {
 
-    private final String TEST_DB_FILE = "concurrency_test.db";
-    private final String TEST_LOG_FILE = "concurrency_test.db.log";
+    private final String TEST_DB_NAME = "concurrency_test_db";
+    private DiskManager diskManager;
+    private BufferPoolManager bufferPoolManager;
+    private LogManager logManager;
+    private LockManager lockManager;
+    private TransactionManager transactionManager;
+    private Catalog catalog;
+    private TableInfo testTableInfo;
 
     @BeforeEach
-    void setUp() {
-        new File(TEST_DB_FILE).delete();
-        new File(TEST_LOG_FILE).delete();
+    void setUp() throws IOException {
+        deleteDirectory(new File("data/" + TEST_DB_NAME));
+        diskManager = new DiskManager("data/" + TEST_DB_NAME + "/minidb.data");
+        diskManager.open();
+        bufferPoolManager = new BufferPoolManager(100, diskManager, "LRU");
+        logManager = new LogManager("data/" + TEST_DB_NAME + "/minidb.data.log");
+        lockManager = new LockManager();
+        transactionManager = new TransactionManager(lockManager, logManager);
+        catalog = new Catalog(bufferPoolManager);
+        testTableInfo = catalog.createTable("test_table", new Schema(Arrays.asList(new Column("id", DataType.INT))));
     }
 
     @AfterEach
     void tearDown() throws IOException {
-        new File(TEST_DB_FILE).delete();
-        new File(TEST_LOG_FILE).delete();
+        if (logManager != null) logManager.close();
+        if (diskManager != null) diskManager.close();
+        deleteDirectory(new File("data/" + TEST_DB_NAME));
     }
 
     @Test
     void testWriterBlocksReader() throws InterruptedException {
-        System.out.println("--- Test: Writer Blocks Reader ---");
-        // 1. Setup
-        QueryProcessor qp = new QueryProcessor(TEST_DB_FILE);
-        qp.execute("CREATE TABLE accounts (id INT, balance INT);");
-        qp.execute("INSERT INTO accounts (id, balance) VALUES (1, 1000);");
+        System.out.println("--- Test: Writer (Exclusive Lock) should block Reader (Shared Lock) ---");
 
-        CountDownLatch writerLatch = new CountDownLatch(1);
-        CountDownLatch readerLatch = new CountDownLatch(1);
-        AtomicBoolean readerIsBlocked = new AtomicBoolean(false);
+        TableHeap tableHeap = new TableHeap(bufferPoolManager, testTableInfo, logManager, lockManager);
+        PageId pageId = testTableInfo.getFirstPageId();
 
-        // 2. 线程 A (Writer) - 获取排他锁并持有
+        CountDownLatch writerStartedLocking = new CountDownLatch(1);
+        CountDownLatch readerFinished = new CountDownLatch(1);
+        AtomicBoolean readerWasBlocked = new AtomicBoolean(false);
+
+        // 线程A: 写入者 (Writer)
         Thread writerThread = new Thread(() -> {
-            QueryProcessor writerQp = new QueryProcessor(TEST_DB_FILE);
-            System.out.println("WRITER: Starting transaction.");
-            // 简化：用一个长时间运行的更新来模拟持有锁
-            // 注意：我们的QueryProcessor不支持BEGIN/COMMIT, 所以每个execute是一个独立事务
-            // 我们需要一个新的QueryProcessor来实现并发
-            writerQp.execute("UPDATE accounts SET balance = 500 WHERE id = 1;");
-            System.out.println("WRITER: Update should be blocked, this line should not be reached yet.");
-
-        });
-
-        // 3. 线程 B (Reader) - 尝试获取共享锁
-        Thread readerThread = new Thread(() -> {
             try {
-                writerLatch.await(5, TimeUnit.SECONDS); // 等待Writer启动
-            } catch (InterruptedException e) {
+                Transaction writerTxn = transactionManager.begin();
+                System.out.println("[Writer]  : Tries to acquire EXCLUSIVE lock on page " + pageId.getPageNum());
+                lockManager.lockExclusive(writerTxn, pageId);
+                System.out.println("[Writer]  : Acquired EXCLUSIVE lock. Notifying reader to start.");
+                writerStartedLocking.countDown(); // 通知读者可以开始了
+
+                // 持有锁一段时间，模拟正在进行写操作
+                Thread.sleep(500);
+
+                System.out.println("[Writer]  : Releasing EXCLUSIVE lock.");
+                lockManager.unlock(writerTxn, pageId);
+                transactionManager.commit(writerTxn);
+            } catch (Exception e) {
                 e.printStackTrace();
             }
-            QueryProcessor readerQp = new QueryProcessor(TEST_DB_FILE);
-            System.out.println("READER: Attempting to read balance.");
-            long startTime = System.currentTimeMillis();
-            readerQp.execute("SELECT balance FROM accounts WHERE id = 1;");
-            long endTime = System.currentTimeMillis();
-            if(endTime - startTime > 200){ // 期望被阻塞
-                readerIsBlocked.set(true);
-            }
-            System.out.println("READER: Read completed.");
-            readerLatch.countDown();
         });
-        
-        // 我们需要一种方法让Writer持有锁，但目前每个execute都会自动提交。
-        // 所以，我们需要修改测试逻辑。
-        // 新逻辑：让一个线程执行一个长时间的事务，另一个线程去访问。
-        // 由于我们的系统还不支持并发事务，我们可以用一个简化的方式来测试锁本身。
-        
-        // TODO: The test needs a way to hold a transaction open across multiple 'execute' calls,
-        // which the current QueryProcessor does not support. 
-        // A full concurrency test would require modifications to InteractiveShell/QueryProcessor
-        // to handle BEGIN, COMMIT, and ROLLBACK commands.
-        // For now, manual testing is the best way to observe the locking behavior.
-        
-        System.out.println("NOTE: Automated concurrency test requires interactive transaction support.");
-        System.out.println("Please test manually using two separate InteractiveShell instances.");
 
+        // 线程B: 读取者 (Reader)
+        Thread readerThread = new Thread(() -> {
+            try {
+                // 确保写入者已经持有了锁
+                writerStartedLocking.await(2, TimeUnit.SECONDS);
+
+                Transaction readerTxn = transactionManager.begin();
+                long startTime = System.currentTimeMillis();
+                System.out.println("[Reader]  : Tries to acquire SHARED lock on page " + pageId.getPageNum());
+                lockManager.lockShared(readerTxn, pageId);
+                long endTime = System.currentTimeMillis();
+                System.out.println("[Reader]  : Acquired SHARED lock.");
+
+                // 如果获取锁的时间超过了写入者持有锁时间的一半，我们就认为它被阻塞了
+                if (endTime - startTime > 250) {
+                    readerWasBlocked.set(true);
+                }
+
+                lockManager.unlock(readerTxn, pageId);
+                transactionManager.commit(readerTxn);
+            } catch (Exception e) {
+                e.printStackTrace();
+            } finally {
+                readerFinished.countDown();
+            }
+        });
+
+        writerThread.start();
+        readerThread.start();
+
+        // 等待读者线程完成
+        readerFinished.await(5, TimeUnit.SECONDS);
+
+        assertTrue(readerWasBlocked.get(), "Reader should have been blocked by the writer's exclusive lock.");
+        System.out.println("\n[SUCCESS] Verification passed. The reader was correctly blocked.");
+    }
+
+    private void deleteDirectory(File directory) {
+        if (!directory.exists()) return;
+        File[] allContents = directory.listFiles();
+        if (allContents != null) {
+            for (File file : allContents) {
+                deleteDirectory(file);
+            }
+        }
+        directory.delete();
     }
 }
