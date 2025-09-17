@@ -289,6 +289,8 @@ public class MysqlProtocolHandler implements Runnable {
 
                         int currentSeqId = serverSequenceId;
                         currentSeqId = sendResultSetHeader(out, currentSeqId, schema.getColumns().size());
+                        // 在调用 sendFieldPackets 之前，为 effectiveTableName 提供一个非 null 的默认值
+                        String tableNameForPacket = (effectiveTableName == null) ? "" : effectiveTableName;
                         currentSeqId = sendFieldPackets(out, currentSeqId, schema, effectiveTableName);
                         currentSeqId = sendEofPacket(out, currentSeqId);
 
@@ -464,8 +466,9 @@ public class MysqlProtocolHandler implements Runnable {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             bos.write(writeLengthEncodedString("def"));           // catalog
             bos.write(writeLengthEncodedString(this.currentDb != null ? this.currentDb : "")); // database
-            bos.write(writeLengthEncodedString(tableName));                       // table name
-            bos.write(writeLengthEncodedString(tableName));                       // org_table
+            // 确保即使传入的tableName是null，也写入一个空字符串而不是null，防止空指针
+            bos.write(writeLengthEncodedString(tableName != null ? tableName : "")); // table name
+            bos.write(writeLengthEncodedString(tableName != null ? tableName : ""));                     // org_table
             bos.write(writeLengthEncodedString(col.getName()));   // name
             bos.write(writeLengthEncodedString(col.getName()));   // org_name
             bos.write(0x0c);                                      // length of fixed fields
@@ -623,6 +626,10 @@ public class MysqlProtocolHandler implements Runnable {
     }
 
     private byte[] writeLengthEncodedString(String s) throws IOException {
+        // 增加一个null检查，如果字符串为null，则视为空字符串处理，增加代码健壮性
+        if (s == null) {
+            s = "";
+        }
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         byte[] data = s.getBytes(StandardCharsets.UTF_8);
         bos.write(writeLengthEncodedInt(data.length));
